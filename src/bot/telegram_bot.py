@@ -81,10 +81,12 @@ def get_settings_inline_menu() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="✏️ Изменить поисковый запрос", callback_data="set_query_prompt")
     builder.button(text="🌍 Регион (РФ / Москва / СПб)", callback_data="toggle_area")
-    builder.button(text="⏳ Опыт работы", callback_data="toggle_exp")
+    builder.button(text="💼 Опыт работы", callback_data="toggle_exp")
+    builder.button(text="⏰ Период публикации (свежесть)", callback_data="toggle_period")
     builder.button(text="💰 Только с зарплатой (Вкл/Выкл)", callback_data="toggle_salary")
+    builder.button(text="🗑️ Очистить базу вакансий", callback_data="prompt_clear_db")
     builder.button(text="🔙 Назад в меню", callback_data="menu_back")
-    builder.adjust(1, 1, 1, 1, 1)
+    builder.adjust(1, 1, 1, 1, 1, 1, 1)
     return builder.as_markup()
 
 
@@ -95,9 +97,11 @@ async def setup_bot_commands(bot: Bot):
         BotCommand(command="menu", description="📱 Открыть панель управления"),
         BotCommand(command="autopilot", description="🚀 Авто-отклики (топ-вакансии)"),
         BotCommand(command="search", description="🔍 Поиск вакансий (<запрос>)"),
+        BotCommand(command="audit", description="📊 Анализ рынка и аудит резюме"),
         BotCommand(command="analyze", description="🤖 Запустить AI-анализ базы"),
         BotCommand(command="stats", description="📊 Статистика базы вакансий"),
         BotCommand(command="excel", description="📥 Получить Excel файл"),
+        BotCommand(command="clear", description="🗑️ Очистить базу вакансий"),
         BotCommand(command="resumes", description="📄 Список и выбор резюме"),
         BotCommand(command="settings", description="⚙️ Настройки и фильтры"),
         BotCommand(command="auth", description="🔐 Авторизация в HeadHunter"),
@@ -217,7 +221,37 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
         builder = InlineKeyboardBuilder()
         builder.button(text="📥 Скачать Excel файл", callback_data="menu_excel")
         builder.button(text="🤖 Запустить AI-анализ", callback_data="menu_analyze")
+        builder.button(text="📊 Аудит резюме под рынок", callback_data="menu_audit")
+        builder.adjust(2, 1)
         await message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+
+    @dp.message(Command("audit"))
+    @dp.message(F.text == "📊 Аудит резюме")
+    async def cmd_audit(message: types.Message):
+        msg_wait = await message.answer("📊 Анализирую базу вакансий и соответствие вашего резюме рынку...")
+        try:
+            report = analyzer.audit_market_competency()
+            if report.get("status") == "empty":
+                await msg_wait.edit_text("⚠️ База вакансий пуста. Сначала выполните поиск вакансий (/search).")
+                return
+
+            strong_list = "\n".join([f"  • {s}" for s in report.get('strong_skills', [])[:5]]) or "  • Не выявлено"
+            missing_list = "\n".join([f"  • {s}" for s in report.get('missing_critical', [])[:5]]) or "  • Значительных пробелов нет"
+            rec_list = "\n".join([f"  • {r}" for r in report.get('recommendations', [])[:3]]) or "  • Резюме отлично адаптировано"
+
+            text = (
+                f"📊 **АУДИТ РЕЗЮМЕ ПОД РЫНОК ВАКАНСИЙ**\n\n"
+                f"👤 **Профиль:** {report.get('resume_title')}\n"
+                f"📈 **Конкурентоспособность:** **{report.get('competency_score')}%**\n"
+                f"🏆 **Статус:** {report.get('market_tier')}\n"
+                f"🔍 **Выборка рынка:** {report.get('vacancies_analyzed')} вакансий\n\n"
+                f"🟢 **Ваши сильные стороны:**\n{strong_list}\n\n"
+                f"🔴 **Критичные пробелы рынка:**\n{missing_list}\n\n"
+                f"💡 **Рекомендации:**\n{rec_list}"
+            )
+            await msg_wait.edit_text(text, parse_mode="Markdown")
+        except Exception as e:
+            await msg_wait.edit_text(f"❌ Ошибка аудита: {e}")
 
     @dp.message(Command("excel"))
     @dp.message(F.text == "📥 Скачать Excel")
@@ -229,6 +263,20 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
 
         doc = FSInputFile(str(excel_path), filename=f"HH_Vacancies_{excel_path.name}")
         await message.answer_document(doc, caption="📊 **Актуальная база вакансий в Excel**", parse_mode="Markdown")
+
+    @dp.message(Command("clear"))
+    async def cmd_clear(message: types.Message):
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🗑️ Да, удалить все вакансии", callback_data="confirm_clear_db")
+        builder.button(text="❌ Отмена", callback_data="cancel_clear_db")
+        builder.adjust(1, 1)
+
+        await message.answer(
+            "⚠️ **Вы уверены, что хотите полностью очистить локальную базу вакансий?**\n\n"
+            "Все сохраненные вакансии, статусы откликов и письма в `data/vacancies.xlsx` будут удалены.",
+            reply_markup=builder.as_markup(),
+            parse_mode="Markdown",
+        )
 
     @dp.message(Command("analyze"))
     @dp.message(F.text == "🤖 AI-анализ базы")
@@ -325,6 +373,18 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
         area_names = {"113": "Вся Россия (113)", "1": "Москва (1)", "2": "Санкт-Петербург (2)"}
         area_str = area_names.get(str(settings.SEARCH_AREA), f"Код {settings.SEARCH_AREA}")
         
+        period_names = {
+            "1": "⚡ За 24 часа (1 день)",
+            "3": "🕒 За 3 дня",
+            "7": "📅 За неделю (7 дн)",
+            "14": "📆 За 2 недели",
+            "30": "🗓️ За месяц (30 дн)",
+            "60": "⏳ За 2 месяца",
+            "90": "📊 За 3 месяца",
+            "365": "🏛️ За год (365 дн)",
+            "all": "🌐 За все время",
+        }
+        period_str = period_names.get(str(settings.SEARCH_PERIOD), f"{settings.SEARCH_PERIOD} дн")
         salary_str = "Да (только с з/п)" if settings.SEARCH_ONLY_WITH_SALARY else "Все вакансии"
 
         text = (
@@ -332,6 +392,7 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
             f"🔍 **Поисковый запрос:** *{settings.SEARCH_TEXT or 'Любой'}*\n"
             f"🌍 **Регион:** {area_str}\n"
             f"💼 **Опыт работы:** `{settings.SEARCH_EXPERIENCE}`\n"
+            f"⏰ **Период публикации:** {period_str}\n"
             f"💰 **Зарплатный фильтр:** {salary_str}\n"
             f"📄 **ID резюме:** `{settings.HH_RESUME_ID or 'Не выбрано'}`\n\n"
             "Нажмите на нужный пункт для изменения:"
@@ -390,12 +451,13 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
         )
 
     async def execute_search(query: str, target_message: types.Message, max_count: int = 5):
-        msg_wait = await target_message.answer(f"🔍 Ищу вакансии по запросу: *«{query}»*...", parse_mode="Markdown")
+        msg_wait = await target_message.answer(f"🔍 Ищу вакансии по запросу: *«{query}»* (период: {settings.SEARCH_PERIOD} дн)...", parse_mode="Markdown")
         client = HHClient()
         vacancies = client.fetch_and_normalize_vacancies(
             text=query,
             area=settings.SEARCH_AREA,
             experience=settings.SEARCH_EXPERIENCE,
+            search_period=settings.SEARCH_PERIOD,
             only_with_salary=settings.SEARCH_ONLY_WITH_SALARY,
             max_vacancies=max_count,
             fetch_full_description=True,
@@ -632,6 +694,11 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
         await callback.answer()
         await cmd_stats(callback.message)
 
+    @dp.callback_query(F.data == "menu_audit")
+    async def cb_menu_audit(callback: types.CallbackQuery):
+        await callback.answer()
+        await cmd_audit(callback.message)
+
     @dp.callback_query(F.data == "menu_excel")
     async def cb_menu_excel(callback: types.CallbackQuery):
         await callback.answer()
@@ -692,13 +759,24 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
 
     @dp.callback_query(F.data == "toggle_exp")
     async def cb_toggle_exp(callback: types.CallbackQuery):
-        exps = ["noExperience", "between1And3", "between3And6", "moreThan6"]
+        exps = ["all", "noExperience", "between1And3", "between3And6", "moreThan6"]
         current = settings.SEARCH_EXPERIENCE
         next_idx = (exps.index(current) + 1) % len(exps) if current in exps else 0
         new_exp = exps[next_idx]
         update_env_variable("SEARCH_EXPERIENCE", new_exp)
         settings.SEARCH_EXPERIENCE = new_exp
-        await callback.answer("Опыт изменен!")
+        await callback.answer(f"Опыт изменен на: {new_exp}")
+        await cmd_settings(callback.message)
+
+    @dp.callback_query(F.data == "toggle_period")
+    async def cb_toggle_period(callback: types.CallbackQuery):
+        periods = ["1", "3", "7", "14", "30", "60", "90", "365", "all"]
+        current = str(settings.SEARCH_PERIOD)
+        next_idx = (periods.index(current) + 1) % len(periods) if current in periods else 0
+        new_period = periods[next_idx]
+        update_env_variable("SEARCH_PERIOD", new_period)
+        settings.SEARCH_PERIOD = new_period
+        await callback.answer(f"Период изменен: {new_period} дн")
         await cmd_settings(callback.message)
 
     @dp.callback_query(F.data == "toggle_salary")
@@ -707,6 +785,36 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
         update_env_variable("SEARCH_ONLY_WITH_SALARY", str(new_val).lower())
         settings.SEARCH_ONLY_WITH_SALARY = new_val
         await callback.answer("Фильтр зарплаты изменен!")
+        await cmd_settings(callback.message)
+
+    @dp.callback_query(F.data == "prompt_clear_db")
+    async def cb_prompt_clear_db(callback: types.CallbackQuery):
+        await callback.answer()
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🗑️ Да, удалить все вакансии", callback_data="confirm_clear_db")
+        builder.button(text="❌ Отмена", callback_data="cancel_clear_db")
+        builder.adjust(1, 1)
+        await callback.message.edit_text(
+            "⚠️ **Вы уверены, что хотите полностью очистить локальную базу вакансий?**\n\n"
+            "Все сохраненные вакансии, статусы откликов и письма в `data/vacancies.xlsx` будут удалены.",
+            reply_markup=builder.as_markup(),
+            parse_mode="Markdown",
+        )
+
+    @dp.callback_query(F.data == "confirm_clear_db")
+    async def cb_confirm_clear_db(callback: types.CallbackQuery):
+        storage.clear_all()
+        await callback.answer("База вакансий очищена!")
+        await callback.message.edit_text(
+            "🗑️ **Локальная база вакансий успешно очищена!**\n\n"
+            "Вы можете выполнить новый поиск вакансий через меню.",
+            reply_markup=get_main_inline_menu(),
+            parse_mode="Markdown",
+        )
+
+    @dp.callback_query(F.data == "cancel_clear_db")
+    async def cb_cancel_clear_db(callback: types.CallbackQuery):
+        await callback.answer("Очистка отменена")
         await cmd_settings(callback.message)
 
     @dp.callback_query(F.data.startswith("select_resume:"))

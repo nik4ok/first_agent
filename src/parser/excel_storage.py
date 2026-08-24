@@ -72,6 +72,12 @@ class ExcelStorage:
             return pd.DataFrame(columns=list(self.COLUMN_NAMES_RU.values()))
         return pd.read_excel(self.file_path, dtype=str)
 
+    def clear_all(self) -> bool:
+        """Полная очистка локальной базы вакансий (создает чистый Excel-файл с заголовками)."""
+        empty_df = pd.DataFrame(columns=list(self.COLUMN_NAMES_RU.values()))
+        self._write_styled_excel(empty_df)
+        return True
+
     def save_or_update_vacancies(self, vacancies: List[Dict[str, Any]]) -> Tuple[int, int]:
         """
         Сохраняет новые вакансии и обновляет данные (описание, скор, навыки) для уже существующих.

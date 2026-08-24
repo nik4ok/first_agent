@@ -2,7 +2,7 @@ import concurrent.futures
 from datetime import datetime
 import logging
 import re
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
 import requests
 from bs4 import BeautifulSoup
 
@@ -147,16 +147,23 @@ class HHClient:
         text: str = "Python",
         area: Optional[str] = "113",
         experience: Optional[str] = None,
+        search_period: Optional[Union[str, int]] = "30",
         only_with_salary: bool = False,
+        order_by: str = "publication_time",
         max_vacancies: int = 20,
         fetch_full_description: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Поиск вакансий через Web-выдачу hh.ru с параллельным сбором полных описаний.
+        order_by: 'publication_time' (по дате/свежие) или 'relevance' (по соответствию)
+        search_period: 1 (день), 3 (дня), 7 (неделя), 14 (2 недели), 30 (месяц), 60 (2 мес), 90 (3 мес), 365 (год), 'all' (все время)
+        experience: 'noExperience', 'between1And3', 'between3And6', 'moreThan6', или 'all'/None (все)
+        max_vacancies: любое желаемое количество вакансий
         """
         results: List[Dict[str, Any]] = []
         page = 0
         seen_ids = set()
+        max_pages = min(50, max(2, (max_vacancies // 20) + 4))
 
         exp_map = {
             "noExperience": "noExperience",
@@ -165,17 +172,21 @@ class HHClient:
             "moreThan6": "moreThan6",
         }
 
-        while len(results) < max_vacancies:
+        order_val = "publication_time" if order_by == "publication_time" else "relevance"
+
+        while len(results) < max_vacancies and page < max_pages:
             params: Dict[str, Any] = {
                 "text": text,
                 "page": page,
                 "items_on_page": min(max_vacancies - len(results) + 5, 50),
-                "order_by": "publication_time",
+                "order_by": order_val,
             }
-            if area:
-                params["area"] = area
-            if experience and experience in exp_map:
+            if area and str(area).strip() not in {"", "all", "0"}:
+                params["area"] = str(area).strip()
+            if experience and experience in exp_map and experience != "all":
                 params["experience"] = exp_map[experience]
+            if search_period and str(search_period).strip() not in {"all", "0", ""}:
+                params["search_period"] = str(search_period).strip()
             if only_with_salary:
                 params["only_with_salary"] = "true"
 
@@ -311,33 +322,48 @@ class HHClient:
         text: str = "Python",
         area: Optional[str] = "113",
         experience: Optional[str] = None,
+        search_period: Optional[Union[str, int]] = "30",
         only_with_salary: bool = False,
+        order_by: str = "publication_time",
         max_vacancies: int = 20,
         fetch_full_description: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Основной метод сбора вакансий.
+        Поддерживает сбор любого количества вакансий (max_vacancies) и фильтрацию по свежести (search_period).
         """
         # Сначала пробуем официальный API
         try:
             url = f"{self.base_url}/vacancies"
-            params = {
-                "text": text,
-                "area": area or "113",
-                "per_page": min(max_vacancies, 50),
-                "page": 0,
-                "order_by": "publication_time",
-            }
-            if experience:
-                params["experience"] = experience
-            if only_with_salary:
-                params["only_with_salary"] = "true"
+            results = []
+            api_page = 0
+            max_api_pages = min(20, max(1, (max_vacancies + 49) // 50))
 
-            resp = requests.get(url, headers=self.api_headers, params=params, timeout=10)
-            if resp.status_code == 200:
+            while len(results) < max_vacancies and api_page < max_api_pages:
+                per_page_count = min(max_vacancies - len(results), 50)
+                params = {
+                    "text": text,
+                    "area": area or "113",
+                    "per_page": max(per_page_count, 10),
+                    "page": api_page,
+                    "order_by": "publication_time" if order_by == "publication_time" else "relevance",
+                }
+                if experience and experience not in {"all", ""}:
+                    params["experience"] = experience
+                if search_period and str(search_period).strip() not in {"all", "0", ""}:
+                    params["period"] = int(search_period)
+                if only_with_salary:
+                    params["only_with_salary"] = "true"
+
+                resp = requests.get(url, headers=self.api_headers, params=params, timeout=10)
+                if resp.status_code != 200:
+                    break
+
                 items = resp.json().get("items", [])
-                results = []
-                for item in items[:max_vacancies]:
+                if not items:
+                    break
+
+                for item in items:
                     v_id = str(item.get("id"))
                     sal_info = self.parse_salary_dict(item.get("salary"))
                     req_txt = self.clean_html(item.get("snippet", {}).get("requirement", "") or "")
@@ -363,8 +389,28 @@ class HHClient:
                         "cover_letter": "",
                         "notes": "",
                     })
-                if results:
-                    return results
+                    if len(results) >= max_vacancies:
+                        break
+
+                api_page += 1
+
+            if results:
+                # Если требуется полное описание и навыки со страницы вакансии
+                if fetch_full_description:
+                    logger.info(f"Загрузка полных описаний и навыков для {len(results)} вакансий API...")
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                        future_to_id = {executor.submit(self.fetch_vacancy_full_details, r["id"]): r for r in results}
+                        for future in concurrent.futures.as_completed(future_to_id):
+                            rec = future_to_id[future]
+                            try:
+                                desc, skills = future.result()
+                                if desc:
+                                    rec["description"] = desc
+                                if skills:
+                                    rec["skills"] = ", ".join(skills)
+                            except Exception:
+                                pass
+                return results
         except Exception as e:
             logger.warning(f"Официальный API недоступен, переключаемся на Web-режим: {e}")
 
@@ -373,7 +419,9 @@ class HHClient:
             text=text,
             area=area,
             experience=experience,
+            search_period=search_period,
             only_with_salary=only_with_salary,
+            order_by=order_by,
             max_vacancies=max_vacancies,
             fetch_full_description=fetch_full_description,
         )

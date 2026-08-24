@@ -36,10 +36,13 @@ browser_login_state: Dict[str, Any] = {
 
 class SearchRequest(BaseModel):
     query: str
-    count: int = 10
+    count: int = 20
     area: str = "113"
-    experience: Optional[str] = "between1And3"
+    experience: Optional[str] = "all"
+    period: Optional[str] = "30"
+    order_by: str = "publication_time"
     only_with_salary: bool = False
+    save_as_default: bool = False
 
 
 class LetterUpdateRequest(BaseModel):
@@ -135,14 +138,19 @@ async def browser_login_open():
 
         launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
         browser = None
-        try:
-            browser = await p.chromium.launch(headless=False, args=launch_args)
-        except Exception as e_bundled:
-            logger.info(f"Пробую запустить установленный системный Google Chrome: {e_bundled}")
+        chrome_macos = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        if chrome_macos.exists():
             try:
+                browser = await p.chromium.launch(executable_path=str(chrome_macos), headless=False, args=launch_args)
+            except Exception as e_ch:
+                logger.info(f"Не удалось открыть системный Chrome ({e_ch}), пробую стандартный chromium")
+
+        if not browser:
+            try:
+                browser = await p.chromium.launch(headless=False, args=launch_args)
+            except Exception as e_bundled:
+                logger.info(f"Пробую запустить установленный системный Google Chrome: {e_bundled}")
                 browser = await p.chromium.launch(channel="chrome", headless=False, args=launch_args)
-            except Exception:
-                raise e_bundled
 
         browser_login_state["browser"] = browser
 
@@ -413,16 +421,81 @@ async def get_vacancies():
     return result
 
 
+@app.get("/api/stats")
+async def get_stats():
+    """Сводная статистика базы вакансий и откликов для дашборда."""
+    df = storage.load_all()
+    if df.empty:
+        return {
+            "total": 0,
+            "applied": 0,
+            "skipped": 0,
+            "analyzed": 0,
+            "new": 0,
+            "high_match": 0,
+            "medium_match": 0,
+            "low_match": 0,
+            "avg_score": 0,
+            "has_resume": settings.RESUME_PATH.exists() and len(settings.RESUME_PATH.read_text(encoding="utf-8").strip()) > 20,
+        }
+
+    status_col = "Статус" if "Статус" in df.columns else "status"
+    score_col = "Score (%)" if "Score (%)" in df.columns else "match_score"
+
+    scores = pd.to_numeric(df[score_col], errors="coerce").dropna()
+    total = len(df)
+    applied = len(df[df[status_col] == "APPLIED"])
+    skipped = len(df[df[status_col] == "SKIPPED"])
+    analyzed = len(df[df[status_col] == "ANALYZED"])
+    new_items = len(df[df[status_col] == "NEW"])
+
+    high_match = len(scores[scores >= 70])
+    med_match = len(scores[(scores >= 40) & (scores < 70)])
+    low_match = len(scores[scores < 40])
+    avg_score = round(float(scores.mean()), 1) if not scores.empty else 0
+
+    return {
+        "total": total,
+        "applied": applied,
+        "skipped": skipped,
+        "analyzed": analyzed,
+        "new": new_items,
+        "high_match": high_match,
+        "medium_match": med_match,
+        "low_match": low_match,
+        "avg_score": avg_score,
+        "has_resume": settings.RESUME_PATH.exists() and len(settings.RESUME_PATH.read_text(encoding="utf-8").strip()) > 20,
+    }
+
+
+@app.get("/api/market-audit")
+async def api_market_audit():
+    """Комплексный аудит резюме против всей текущей базы спарсенных вакансий."""
+    return analyzer.audit_market_competency()
+
+
 @app.post("/api/search")
 async def api_search(req: SearchRequest):
     """Сбор свежих вакансий по любому запросу с HeadHunter в Excel и мгновенный AI-скоринг."""
     client = HHClient()
     query = req.query.strip() or settings.SEARCH_TEXT or "IT"
+
+    if req.save_as_default:
+        update_env_variable("SEARCH_TEXT", query)
+        if req.area:
+            update_env_variable("SEARCH_AREA", req.area)
+        if req.experience:
+            update_env_variable("SEARCH_EXPERIENCE", req.experience)
+        if req.period:
+            update_env_variable("SEARCH_PERIOD", req.period)
+
     vacancies = client.fetch_and_normalize_vacancies(
         text=query,
         area=req.area,
         experience=req.experience,
+        search_period=req.period,
         only_with_salary=req.only_with_salary,
+        order_by=req.order_by,
         max_vacancies=req.count,
     )
 
@@ -434,7 +507,7 @@ async def api_search(req: SearchRequest):
         missing_skills = ", ".join(match_info.get("missing_skills", []))
         pros = match_info.get("pros", "")
         cons = match_info.get("cons", "")
-        
+
         notes_str = f"Плюсы: {pros} | Минусы: {cons}"
         if matching_skills:
             notes_str += f" | Match Skills: {matching_skills}"
@@ -620,6 +693,17 @@ async def download_excel():
         filename="vacancies.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+@app.post("/api/clear-database")
+async def api_clear_database():
+    """Полная очистка локальной базы вакансий в Excel."""
+    try:
+        storage.clear_all()
+        return {"status": "ok", "message": "База вакансий успешно очищена!"}
+    except Exception as e:
+        logger.error(f"Ошибка при очистке базы: {e}")
+        raise HTTPException(status_code=500, detail=f"Не удалось очистить базу: {e}")
 
 
 def run_web_dashboard(host: str = "127.0.0.1", port: int = 8000):

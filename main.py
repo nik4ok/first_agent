@@ -33,15 +33,24 @@ def handle_browser_login():
     session_file = settings.DATA_DIR / "browser_state.json"
     with sync_playwright() as p:
         launch_args = ["--disable-blink-features=AutomationControlled"]
-        try:
-            browser = p.chromium.launch(headless=False, args=launch_args)
-        except Exception as e_bundled:
+        browser = None
+        chrome_macos = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        if chrome_macos.exists():
             try:
-                browser = p.chromium.launch(channel="chrome", headless=False, args=launch_args)
+                browser = p.chromium.launch(executable_path=str(chrome_macos), headless=False, args=launch_args)
             except Exception:
-                print(f"❌ Ошибка запуска браузера: {e_bundled}")
-                print("💡 Выполните установку браузера: ./venv/bin/playwright install chromium")
-                return
+                pass
+
+        if not browser:
+            try:
+                browser = p.chromium.launch(headless=False, args=launch_args)
+            except Exception as e_bundled:
+                try:
+                    browser = p.chromium.launch(channel="chrome", headless=False, args=launch_args)
+                except Exception:
+                    print(f"❌ Ошибка запуска браузера: {e_bundled}")
+                    print("💡 Выполните установку браузера: ./venv/bin/playwright install chromium")
+                    return
 
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",

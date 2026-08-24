@@ -27,6 +27,7 @@ class Settings:
     SEARCH_TEXT: str = os.getenv("SEARCH_TEXT", "")
     SEARCH_AREA: str = os.getenv("SEARCH_AREA", "113")  # 113 = Россия, 1 = Москва
     SEARCH_EXPERIENCE: str = os.getenv("SEARCH_EXPERIENCE", "between1And3")
+    SEARCH_PERIOD: str = os.getenv("SEARCH_PERIOD", "30")  # дни: 1, 3, 7, 14, 30, 60, 90, 365, all
     SEARCH_ONLY_WITH_SALARY: bool = os.getenv("SEARCH_ONLY_WITH_SALARY", "false").lower() == "true"
     SEARCH_PER_PAGE: int = int(os.getenv("SEARCH_PER_PAGE", "20"))
 
@@ -51,6 +52,7 @@ class Settings:
         cls.SEARCH_TEXT = os.getenv("SEARCH_TEXT", cls.SEARCH_TEXT)
         cls.SEARCH_AREA = os.getenv("SEARCH_AREA", cls.SEARCH_AREA)
         cls.SEARCH_EXPERIENCE = os.getenv("SEARCH_EXPERIENCE", cls.SEARCH_EXPERIENCE)
+        cls.SEARCH_PERIOD = os.getenv("SEARCH_PERIOD", cls.SEARCH_PERIOD)
         cls.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", cls.OPENAI_API_KEY)
         cls.OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", cls.OPENAI_BASE_URL)
         cls.OPENAI_MODEL = os.getenv("OPENAI_MODEL", cls.OPENAI_MODEL)

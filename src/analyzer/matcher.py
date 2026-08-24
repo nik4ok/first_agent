@@ -244,7 +244,13 @@ class AIResumeAnalyzer:
 
         # Латинские термины от 3 символов
         latin_words = re.findall(r"\b[A-Za-z]{3,}\b", text)
-        stop_latin = {"and", "the", "for", "with", "from", "you", "are", "have", "our", "all", "will", "this", "that", "team", "work", "job", "good", "plus", "must", "years", "senior", "middle", "junior", "lead", "developer", "engineer"}
+        stop_latin = {
+            "and", "the", "for", "with", "from", "you", "are", "have", "our", "all", "will", "this", "that",
+            "team", "work", "job", "good", "plus", "must", "years", "senior", "middle", "junior", "lead",
+            "developer", "engineer", "data", "product", "company", "project", "user", "business", "service",
+            "system", "requirements", "experience", "skills", "about", "role", "looking", "responsibilities",
+            "salary", "bonus", "time", "full", "part", "hybrid", "remote", "office", "moscow", "russia",
+        }
         for w in latin_words:
             w_cap = w.capitalize()
             if w.lower() not in stop_latin and len(w) > 2 and w_cap not in found and len(found) < 25:
@@ -421,3 +427,184 @@ class AIResumeAnalyzer:
             "cons": cons_text,
             "recommendation": rec,
         }
+
+    def audit_market_competency(self, vacancies: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """
+        Комплексный аудит резюме против всего среза рынка:
+        1. Анализирует частотность всех навыков и требований среди всех спарсенных вакансий.
+        2. Сопоставляет стек кандидата со срезом рынка.
+        3. Рассчитывает индекс конкурентоспособности резюме.
+        4. Формирует конкретные рекомендации по доработке резюме под требования работодателей.
+        """
+        from collections import Counter
+
+        # Если вакансии не переданы, пробуем загрузить из Excel
+        if not vacancies:
+            from src.parser.excel_storage import ExcelStorage
+            storage = ExcelStorage()
+            df = storage.load_all()
+            if df.empty:
+                return {
+                    "status": "empty",
+                    "message": "База вакансий пуста. Сначала выполните поиск вакансий.",
+                }
+            df_clean = df.fillna("")
+            vacancies = []
+            title_col = "Название вакансии" if "Название вакансии" in df.columns else "title"
+            desc_col = "Полное описание" if "Полное описание" in df.columns else "description"
+            skills_col = "Ключевые навыки" if "Ключевые навыки" in df.columns else "skills"
+            for _, r in df_clean.iterrows():
+                vacancies.append({
+                    "title": str(r.get(title_col, "")),
+                    "description": str(r.get(desc_col, "")),
+                    "skills": str(r.get(skills_col, "")),
+                })
+
+        total_vacancies = len(vacancies)
+        if total_vacancies == 0:
+            return {"status": "empty", "message": "Нет данных по вакансиям для анализа."}
+
+        # 1. Извлекаем все навыки из всех вакансий и считаем частотность
+        all_skills_counter = Counter()
+        canonical_map = {
+            "sql": "SQL",
+            "python": "Python",
+            "excel": "Excel",
+            "power bi": "Power BI",
+            "powerbi": "Power BI",
+            "tableau": "Tableau",
+            "clickhouse": "ClickHouse",
+            "postgresql": "PostgreSQL",
+            "postgres": "PostgreSQL",
+            "spark": "PySpark / Spark",
+            "pyspark": "PySpark / Spark",
+            "airflow": "Airflow",
+            "pandas": "Pandas",
+            "numpy": "NumPy",
+            "git": "Git",
+            "docker": "Docker",
+            "dbt": "dbt",
+            "superset": "Apache Superset",
+            "hadoop": "Hadoop",
+            "fastapi": "FastAPI",
+            "django": "Django",
+            "a/b": "A/B Тестирование",
+            "ab": "A/B Тестирование",
+            "unit economy": "Unit-экономика",
+            "causal inference": "Causal Inference",
+            "ml": "Machine Learning (ML)",
+            "stat": "Мат. статистика",
+        }
+
+        for v in vacancies:
+            v_text = f"{v.get('title', '')} {v.get('description', '')}"
+            skills_in_v = self.extract_skills_from_text(v_text, explicit_skills=v.get("skills", ""))
+            seen_in_v = set()
+            for s in skills_in_v:
+                s_clean = s.strip()
+                if not s_clean or s_clean.lower() in {"nan", "none", "null"}:
+                    continue
+                s_lower = s_clean.lower()
+                s_canon = canonical_map.get(s_lower, s_clean.capitalize() if s_clean.islower() else s_clean)
+                if s_canon.lower() not in seen_in_v:
+                    seen_in_v.add(s_canon.lower())
+                    all_skills_counter[s_canon] += 1
+
+        # 2. Извлекаем навыки кандидата
+        resume_summary = self.get_resume_summary()
+        resume_text = self.load_resume_text()
+        resume_skills = set(k.lower() for k in self.extract_skills_from_text(resume_text))
+
+        # 3. Формируем топ рынка (навыки, встречающиеся чаще всего)
+        top_skills_raw = all_skills_counter.most_common(25)
+        top_market_skills = []
+        covered_count = 0
+        strong_skills = []
+        missing_critical = []
+        missing_secondary = []
+
+        for skill_name, count in top_skills_raw:
+            pct = round((count / total_vacancies) * 100, 1)
+            is_present = skill_name.lower() in resume_skills
+
+            skill_data = {
+                "skill": skill_name,
+                "count": count,
+                "percentage": pct,
+                "present_in_resume": is_present,
+            }
+            top_market_skills.append(skill_data)
+
+            if is_present:
+                covered_count += 1
+                strong_skills.append(f"{skill_name} ({pct}% рынка)")
+            else:
+                if pct >= 20.0 or len(missing_critical) < 5:
+                    missing_critical.append(f"{skill_name} ({pct}% рынка)")
+                else:
+                    missing_secondary.append(f"{skill_name} ({pct}% рынка)")
+
+        # 4. Расчет индекса конкурентоспособности (0-100)
+        # Взвешиваем покрытие топ-15 навыков рынка
+        top_15 = top_market_skills[:15]
+        if top_15:
+            total_weight = sum(item["percentage"] for item in top_15)
+            covered_weight = sum(item["percentage"] for item in top_15 if item["present_in_resume"])
+            competency_score = int((covered_weight / max(total_weight, 1)) * 100)
+        else:
+            competency_score = 50
+
+        competency_score = max(10, min(99, competency_score))
+
+        # Уровень соответствия
+        if competency_score >= 80:
+            market_tier = "TOP TIER (Высокая конкурентоспособность)"
+            tier_color = "emerald"
+        elif competency_score >= 55:
+            market_tier = "SOLID MATCH (Средне-высокая конкурентоспособность)"
+            tier_color = "blue"
+        else:
+            market_tier = "GAPS DETECTED (Требуется доработка)"
+            tier_color = "amber"
+
+        # 5. Генерация рекомендаций по улучшению
+        recommendations = []
+
+        if missing_critical:
+            clean_critical = [s.split(" (")[0] for s in missing_critical[:5]]
+            recommendations.append(
+                f"🎯 **Добавьте ключевые слова в раздел навыков и опыт:** Рынок в этой сфере требует: {', '.join(clean_critical)}. "
+                "Если у вас есть опыт с этими технологиями, явно упомяните их в тексте для прохождения ATS-фильтров."
+            )
+
+        if "A/B" in str(strong_skills) or "A/B Тестирование" in str(strong_skills):
+            recommendations.append(
+                "📈 **Выделите продуктовые эксперименты:** Навык A/B-тестирования очень востребован. "
+                "Укажите размер выборки, бизнес-эффект (в деньгах или %) и методологию (Causal Inference, CUPED)."
+            )
+
+        if "SQL" in str(strong_skills) or "Python" in str(strong_skills):
+            recommendations.append(
+                "💡 **Оцифруйте результаты работы:** В блоках опыта добавьте глаголы действия и метрики: "
+                "«увеличил маржинальность на X%», «сократил время расчетов с N дней до 1 часа», «автоматизировал пайплайн»."
+            )
+
+        if len(resume_text) < 500:
+            recommendations.append(
+                "⚠️ **Резюме слишком краткое:** Опишите подробнее ваши ключевые проекты, задачи, стек и достигнутые результаты."
+            )
+
+        return {
+            "status": "ok",
+            "vacancies_analyzed": total_vacancies,
+            "resume_title": resume_summary.get("title", "Специалист"),
+            "competency_score": competency_score,
+            "market_tier": market_tier,
+            "tier_color": tier_color,
+            "top_market_skills": top_market_skills[:15],
+            "strong_skills": strong_skills[:8],
+            "missing_critical": missing_critical[:6],
+            "missing_secondary": missing_secondary[:6],
+            "recommendations": recommendations,
+        }
+
