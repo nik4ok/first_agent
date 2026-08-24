@@ -1,0 +1,17 @@
+# Имя: Иван Иванов
+# Специализация: Python Backend / Data Engineer
+# Опыт: 3+ года
+
+## Ключевые навыки:
+- Python 3.10+, FastAPI, Django, Flask
+- PostgreSQL, SQLAlchemy, Redis, ClickHouse
+- Asyncio, Celery, RabbitMQ, Kafka
+- Docker, CI/CD (GitHub Actions, GitLab CI), Linux, Git
+- REST API, GraphQL, Microservices architecture
+- LLM / OpenAI API, LangChain, Agents
+
+## Опыт работы:
+- Разработка масштабируемых микросервисов и API на FastAPI / Python
+- Интеграция сторонних сервисов и парсинг данных
+- Оптимизация SQL-запросов и работа с высоконагруженными базами данных
+- Разработка AI-агентов и интеграция LLM в бизнес-процессы

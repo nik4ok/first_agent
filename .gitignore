@@ -1,0 +1,9 @@
+venv/
+.env
+__pycache__/
+*.pyc
+data/*.xlsx
+data/hh_tokens.json
+data/negotiations_state.json
+!data/.gitkeep
+.DS_Store

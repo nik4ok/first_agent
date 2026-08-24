@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="ru" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Job Agent — HeadHunter Executive Dashboard</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome 6 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            -webkit-font-smoothing: antialiased;
+        }
+        /* Custom scrollbar for clean look */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+
+    <!-- Header / Top Navbar -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-teal-500 flex items-center justify-center text-white text-xl shadow-md">
+                    <i class="fa-solid fa-bolt"></i>
+                </div>
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <h1 class="text-lg font-extrabold text-slate-900 tracking-tight">AI Job Agent</h1>
+                        <span class="px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-blue-100 text-blue-700">HH.ru Pilot</span>
+                    </div>
+                    <p class="text-xs text-slate-500">Автоматический поиск, скоринг резюме и персональные отклики</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-3">
+                <!-- Resume Selector from HH -->
+                <div class="hidden lg:flex items-center space-x-2 bg-slate-100/90 px-3 py-1.5 rounded-xl border border-slate-200 text-xs">
+                    <i class="fa-solid fa-id-card text-slate-500"></i>
+                    <span class="text-slate-500 font-medium">Активное резюме на HH:</span>
+                    <select id="navbar-resume-select" onchange="onSelectResume(this.value)" class="bg-transparent font-bold text-slate-800 focus:outline-none cursor-pointer max-w-[220px] truncate">
+                        <option value="">Загрузка резюме...</option>
+                    </select>
+                </div>
+
+                <a href="/api/download-excel" class="inline-flex items-center px-3 py-1.5 text-xs font-bold rounded-xl text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition shadow-2xs">
+                    <i class="fa-solid fa-file-excel mr-1.5 text-emerald-600"></i> Скачать Excel
+                </a>
+                
+                <span id="auth-status-badge" class="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                    HH Ready
+                </span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+        <!-- Top KPI Row -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <!-- Total in Base -->
+            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
+                <div>
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Всего в базе</p>
+                    <p class="text-2xl font-black text-slate-900 mt-1" id="stat-total">0</p>
+                    <span class="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                        <i class="fa-solid fa-database text-slate-400"></i> Local Excel DB
+                    </span>
+                </div>
+                <div class="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl shadow-2xs">
+                    <i class="fa-solid fa-layer-group"></i>
+                </div>
+            </div>
+
+            <!-- High Match -->
+            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
+                <div>
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Высокий Match (≥70%)</p>
+                    <p class="text-2xl font-black text-emerald-600 mt-1" id="stat-high">0</p>
+                    <span class="text-[11px] text-emerald-600 font-medium flex items-center gap-1 mt-0.5">
+                        <i class="fa-solid fa-circle-check"></i> Топ соответствия
+                    </span>
+                </div>
+                <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl shadow-2xs">
+                    <i class="fa-solid fa-bullseye"></i>
+                </div>
+            </div>
+
+            <!-- Applied -->
+            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
+                <div>
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Отправлено откликов</p>
+                    <p class="text-2xl font-black text-indigo-600 mt-1" id="stat-applied">0</p>
+                    <span class="text-[11px] text-indigo-500 font-medium flex items-center gap-1 mt-0.5">
+                        <i class="fa-solid fa-paper-plane"></i> Через API HH
+                    </span>
+                </div>
+                <div class="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-xl shadow-2xs">
+                    <i class="fa-solid fa-paper-plane"></i>
+                </div>
+            </div>
+
+            <!-- Invited -->
+            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
+                <div>
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Приглашений от HR</p>
+                    <p class="text-2xl font-black text-amber-600 mt-1" id="stat-invited">0</p>
+                    <span class="text-[11px] text-amber-600 font-medium flex items-center gap-1 mt-0.5">
+                        <i class="fa-solid fa-comments"></i> Офферы и чаты
+                    </span>
+                </div>
+                <div class="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-xl shadow-2xs">
+                    <i class="fa-solid fa-trophy"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- RESUME SUMMARY PROFILE CARD -->
+        <div class="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-5 sm:p-6 text-white shadow-md border border-slate-800">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4">
+                <div class="flex items-center space-x-3">
+                    <div class="w-12 h-12 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-center text-blue-400 text-xl font-bold shadow-inner">
+                        <i class="fa-solid fa-user-tie"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center space-x-2">
+                            <h2 class="text-base sm:text-lg font-bold text-white tracking-tight" id="resume-card-title">Загрузка резюме...</h2>
+                            <span class="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-[10px] font-bold">Активно для скоринга</span>
+                        </div>
+                        <p class="text-xs text-slate-400 mt-0.5" id="resume-card-preview">Загрузка краткого описания опыта...</p>
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-2">
+                    <button onclick="openResumeEditModal()" class="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white border border-white/15 text-xs font-bold rounded-xl transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                        <span>Редактировать текст резюме</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Resume Skills Tags -->
+            <div class="pt-4">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <i class="fa-solid fa-tags text-blue-400"></i> Ключевой стек и навыки из резюме:
+                    </span>
+                    <span class="text-[11px] text-slate-400" id="resume-skills-count">0 навыков</span>
+                </div>
+                <div class="flex flex-wrap gap-1.5" id="resume-skills-container">
+                    <span class="text-xs text-slate-400 italic">Загрузка навыков...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- SEARCH AND FILTERS BAR -->
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+            
+            <!-- Main Search Input and Region / Exp Dropdowns -->
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+                <!-- Search Keyword -->
+                <div class="md:col-span-5 relative">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-3.5 text-slate-400 text-sm"></i>
+                    <input 
+                        type="text" 
+                        id="search-query" 
+                        dir="ltr"
+                        autocomplete="off" 
+                        spellcheck="false"
+                        placeholder="Должность или стек (например: Продуктовый аналитик)..." 
+                        class="w-full pl-10 pr-9 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition font-medium text-slate-900"
+                    >
+                    <button onclick="clearSearchInput()" class="absolute right-3 top-3 text-slate-400 hover:text-slate-600 text-sm" title="Очистить">
+                        <i class="fa-solid fa-circle-xmark"></i>
+                    </button>
+                </div>
+
+                <!-- Region / Area Selector -->
+                <div class="md:col-span-3">
+                    <div class="relative">
+                        <i class="fa-solid fa-location-dot absolute left-3.5 top-3.5 text-slate-400 text-sm pointer-events-none"></i>
+                        <select id="search-area" class="w-full pl-9 pr-3 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition font-medium text-slate-800 cursor-pointer">
+                            <option value="113" selected>🇷🇺 Вся Россия</option>
+                            <option value="1">🏙️ Москва</option>
+                            <option value="2">🏛️ Санкт-Петербург</option>
+                            <option value="3">🏢 Екатеринбург</option>
+                            <option value="88">🕌 Казань</option>
+                            <option value="4">🌲 Новосибирск</option>
+                            <option value="66">🏭 Нижний Новгород</option>
+                            <option value="53">🌴 Краснодар</option>
+                            <option value="1002">🇧🇾 Минск</option>
+                            <option value="160">🇰🇿 Алматы</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Experience Selector -->
+                <div class="md:col-span-2">
+                    <select id="search-exp" class="w-full px-3 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition font-medium text-slate-800 cursor-pointer">
+                        <option value="between1And3" selected>1–3 года опыта</option>
+                        <option value="between3And6">3–6 лет опыта</option>
+                        <option value="noExperience">Без опыта</option>
+                        <option value="moreThan6">Более 6 лет</option>
+                    </select>
+                </div>
+
+                <!-- Count & Search Button -->
+                <div class="md:col-span-2 flex items-center space-x-2">
+                    <select id="search-count" class="w-24 px-2.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none font-semibold text-slate-800 cursor-pointer">
+                        <option value="5">5 шт</option>
+                        <option value="10" selected>10 шт</option>
+                        <option value="20">20 шт</option>
+                    </select>
+
+                    <button onclick="triggerSearch()" id="btn-search" class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white text-sm font-bold rounded-xl shadow-sm transition flex items-center justify-center space-x-1.5">
+                        <i class="fa-solid fa-cloud-arrow-down"></i>
+                        <span>Найти</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quick Presets and Secondary Controls -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100 text-xs">
+                <!-- Quick Tags -->
+                <div class="flex items-center flex-wrap gap-1.5">
+                    <span class="text-slate-400 font-semibold mr-1">Быстрый поиск:</span>
+                    <button onclick="setQueryPreset('Продуктовый аналитик')" class="px-2.5 py-1 bg-slate-100 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-slate-200 rounded-lg font-medium transition">
+                        📊 Продуктовый аналитик
+                    </button>
+                    <button onclick="setQueryPreset('Системный аналитик')" class="px-2.5 py-1 bg-slate-100 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-slate-200 rounded-lg font-medium transition">
+                        🔍 Системный аналитик
+                    </button>
+                    <button onclick="setQueryPreset('Data Analyst')" class="px-2.5 py-1 bg-slate-100 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-slate-200 rounded-lg font-medium transition">
+                        📈 Data Analyst
+                    </button>
+                    <button onclick="setQueryPreset('Python Developer')" class="px-2.5 py-1 bg-slate-100 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-slate-200 rounded-lg font-medium transition">
+                        🐍 Python Developer
+                    </button>
+                    <button onclick="setQueryPreset('Product Manager')" class="px-2.5 py-1 bg-slate-100 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-slate-200 rounded-lg font-medium transition">
+                        🎯 Product Manager
+                    </button>
+                </div>
+
+                <!-- AI Run and Status Filter -->
+                <div class="flex items-center space-x-2 self-end sm:self-auto">
+                    <button onclick="triggerAnalyze()" id="btn-analyze" class="px-3.5 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 shadow-2xs">
+                        <i class="fa-solid fa-wand-magic-sparkles text-indigo-600"></i>
+                        <span>AI Анализ новых</span>
+                    </button>
+                    <select id="filter-status" onchange="renderTable()" class="px-3 py-1.5 text-xs font-bold border border-slate-300 rounded-xl bg-slate-50 focus:outline-none cursor-pointer">
+                        <option value="ALL">Все статусы</option>
+                        <option value="NEW">🆕 Только новые (NEW)</option>
+                        <option value="ANALYZED">🧠 Проанализированы (ANALYZED)</option>
+                        <option value="APPLIED">🚀 Отправлен отклик (APPLIED)</option>
+                        <option value="INVITED">🎉 Приглашения (INVITED)</option>
+                        <option value="SKIPPED">🚫 Пропущенные (SKIPPED)</option>
+                    </select>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- VACANCIES LIST SECTION -->
+        <div class="space-y-3">
+            <div class="flex items-center justify-between px-1">
+                <div class="flex items-center space-x-2">
+                    <h3 class="font-extrabold text-slate-900 text-base">Список вакансий и детальный скоринг</h3>
+                    <span id="vacancies-count-badge" class="px-2 py-0.5 rounded-full text-xs font-extrabold bg-slate-200 text-slate-700">0</span>
+                </div>
+                <p class="text-xs text-slate-400">Сравнение стека резюме с требованиями работодателя</p>
+            </div>
+
+            <!-- Vacancy Cards Container -->
+            <div id="vacancies-container" class="space-y-4">
+                <div class="bg-white rounded-2xl p-12 text-center text-slate-400 border border-slate-200 shadow-xs">
+                    <i class="fa-solid fa-spinner fa-spin text-3xl mb-3 text-blue-500"></i>
+                    <p class="font-medium">Загрузка вакансий из базы...</p>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Modal for Cover Letter Preview & Edit -->
+    <div id="modal-letter" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-150">
+            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-envelope-open-text text-blue-600 text-lg"></i>
+                    <div>
+                        <h3 class="font-bold text-slate-900 leading-tight" id="modal-title">Сопроводительное письмо</h3>
+                        <p class="text-xs text-slate-500" id="modal-subtitle">Компания и должность</p>
+                    </div>
+                </div>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            
+            <div class="p-6 space-y-4">
+                <div id="modal-analysis-box" class="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold text-slate-700 uppercase tracking-wider">AI Анализ соответствия:</span>
+                        <span id="modal-score-badge" class="px-2 py-0.5 text-xs font-black rounded-md"></span>
+                    </div>
+                    <p id="modal-analysis" class="text-xs text-slate-600 leading-relaxed"></p>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">Текст сопроводительного письма (можно отредактировать):</label>
+                    <textarea id="modal-textarea" rows="7" class="w-full p-3.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none leading-relaxed text-slate-800"></textarea>
+                </div>
+            </div>
+
+            <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end space-x-3">
+                <button onclick="closeModal()" class="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800">Отмена</button>
+                <button onclick="saveModalLetter()" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm">Сохранить письмо</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Resume Edit -->
+    <div id="modal-resume-edit" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-150">
+            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-file-pen text-indigo-600 text-lg"></i>
+                    <h3 class="font-bold text-slate-900">Редактирование текста резюме (data/my_resume.txt)</h3>
+                </div>
+                <button onclick="closeResumeModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="p-6 space-y-3">
+                <p class="text-xs text-slate-500">
+                    AI-агент использует этот текст для расчета совпадений (Match Score %), выявления сильных/слабых сторон и составления сопроводительных писем.
+                </p>
+                <textarea id="resume-edit-textarea" rows="12" class="w-full p-3.5 font-mono text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none leading-relaxed text-slate-800"></textarea>
+            </div>
+            <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end space-x-3">
+                <button onclick="closeResumeModal()" class="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800">Закрыть</button>
+                <button onclick="saveResumeText()" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm">Сохранить резюме</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast" class="fixed bottom-5 right-5 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl text-sm z-50 hidden flex items-center space-x-2.5">
+        <i id="toast-icon" class="fa-solid fa-check text-emerald-400"></i>
+        <span id="toast-text" class="font-medium">Действие выполнено</span>
+    </div>
+
+    <script>
+        let vacanciesData = [];
+        let currentEditingId = null;
+        let resumeSummaryData = null;
+
+        async function initPage() {
+            await loadConfig();
+            await loadResumeSummary();
+            await loadResumes();
+            await loadVacancies();
+        }
+
+        function clearSearchInput() {
+            const el = document.getElementById('search-query');
+            el.value = '';
+            el.focus();
+        }
+
+        function setQueryPreset(query) {
+            const el = document.getElementById('search-query');
+            el.value = query;
+            el.focus();
+        }
+
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config');
+                const data = await res.json();
+                const qInput = document.getElementById('search-query');
+                if (data.search_text && document.activeElement !== qInput) {
+                    qInput.value = data.search_text;
+                }
+                if (data.search_area) {
+                    document.getElementById('search-area').value = data.search_area;
+                }
+                if (data.search_experience) {
+                    document.getElementById('search-exp').value = data.search_experience;
+                }
+
+                const badge = document.getElementById('auth-status-badge');
+                if (data.is_authorized) {
+                    badge.innerHTML = `<span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> HH Ready`;
+                    badge.className = "inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200";
+                } else {
+                    badge.innerHTML = `<span class="w-2 h-2 mr-1.5 bg-amber-500 rounded-full"></span> Без OAuth`;
+                    badge.className = "inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200";
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function loadResumeSummary() {
+            try {
+                const res = await fetch('/api/resume-summary');
+                const data = await res.json();
+                if (data.status === 'ok' && data.summary) {
+                    resumeSummaryData = data.summary;
+                    document.getElementById('resume-card-title').innerText = data.summary.title || 'Мое резюме';
+                    document.getElementById('resume-card-preview').innerText = data.summary.preview || 'Описание резюме не заполнено.';
+                    document.getElementById('resume-skills-count').innerText = `${data.summary.skills_count} навыков выделено`;
+
+                    const skillsContainer = document.getElementById('resume-skills-container');
+                    if (data.summary.skills && data.summary.skills.length > 0) {
+                        skillsContainer.innerHTML = data.summary.skills.map(s => `
+                            <span class="px-2.5 py-1 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 text-blue-200 border border-white/10 transition">
+                                ${s}
+                            </span>
+                        `).join('');
+                    } else {
+                        skillsContainer.innerHTML = `<span class="text-xs text-slate-400 italic">Навыки будут автоматически извлечены из текста резюме.</span>`;
+                    }
+                }
+            } catch (e) {
+                console.error("Ошибка загрузки профиля резюме:", e);
+            }
+        }
+
+        async function loadResumes() {
+            try {
+                const res = await fetch('/api/my-resumes');
+                const data = await res.json();
+                const sel = document.getElementById('navbar-resume-select');
+                if (data.status === 'ok' && data.items && data.items.length > 0) {
+                    sel.innerHTML = data.items.map(r => `
+                        <option value="${r.id}" ${r.id === data.active_resume_id ? 'selected' : ''}>
+                            ${r.title} (${r.id.substring(0, 8)}...)
+                        </option>
+                    `).join('');
+                } else {
+                    sel.innerHTML = `<option value="">(Авторизуйтесь в HH для списка)</option>`;
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function onSelectResume(id) {
+            if (!id) return;
+            try {
+                await fetch('/api/select-resume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ resume_id: id })
+                });
+                showToast(`Выбрано резюме ID: ${id}`);
+            } catch (e) {
+                showToast("Ошибка выбора резюме", true);
+            }
+        }
+
+        async function loadVacancies() {
+            try {
+                const res = await fetch('/api/vacancies');
+                vacanciesData = await res.json();
+                updateStats();
+                renderTable();
+            } catch (err) {
+                console.error(err);
+                showToast("Ошибка загрузки данных", true);
+            }
+        }
+
+        function updateStats() {
+            const total = vacanciesData.length;
+            const high = vacanciesData.filter(v => parseInt(v.match_score || 0) >= 70).length;
+            const applied = vacanciesData.filter(v => v.status === 'APPLIED').length;
+            const invited = vacanciesData.filter(v => v.status === 'INVITED').length;
+
+            document.getElementById('stat-total').innerText = total;
+            document.getElementById('stat-high').innerText = high;
+            document.getElementById('stat-applied').innerText = applied;
+            document.getElementById('stat-invited').innerText = invited;
+            document.getElementById('vacancies-count-badge').innerText = total;
+        }
+
+        function parseMatchNotes(notes) {
+            if (!notes) return { pros: '', cons: '', matchSkills: [], missingSkills: [] };
+            
+            let matchSkills = [];
+            let missingSkills = [];
+            let pros = '';
+            let cons = '';
+
+            const mMatch = notes.match(/Match Skills:\s*([^|]+)/i);
+            if (mMatch) {
+                matchSkills = mMatch[1].split(',').map(s => s.trim()).filter(Boolean);
+            }
+
+            const mMiss = notes.match(/Missing Skills:\s*([^|]+)/i);
+            if (mMiss) {
+                missingSkills = mMiss[1].split(',').map(s => s.trim()).filter(Boolean);
+            }
+
+            const mPros = notes.match(/Плюсы:\s*([^|]+)/i);
+            if (mPros) pros = mPros[1].trim();
+
+            const mCons = notes.match(/Минусы:\s*([^|]+)/i);
+            if (mCons) cons = mCons[1].trim();
+
+            return { pros, cons, matchSkills, missingSkills };
+        }
+
+        function renderTable() {
+            const filter = document.getElementById('filter-status').value;
+            const container = document.getElementById('vacancies-container');
+
+            let filtered = vacanciesData;
+            if (filter !== 'ALL') {
+                filtered = vacanciesData.filter(v => v.status === filter);
+            }
+
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="bg-white rounded-2xl p-12 text-center text-slate-400 border border-slate-200 shadow-xs">
+                        <i class="fa-solid fa-folder-open text-3xl mb-2 text-slate-300"></i>
+                        <p class="font-bold text-slate-600">Вакансий с выбранным фильтром не найдено</p>
+                        <p class="text-xs text-slate-400 mt-1">Введите поисковый запрос в строке выше и нажмите «Найти»</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = filtered.map(v => {
+                const score = parseInt(v.match_score) || 0;
+                let scoreBadge = `<span class="px-3 py-1.5 text-xs font-black rounded-xl bg-slate-100 text-slate-500 border border-slate-200">—</span>`;
+                let scoreColor = "bg-slate-100 text-slate-700";
+                let barColor = "bg-slate-300";
+
+                if (v.match_score !== null && v.match_score !== undefined && v.match_score !== '') {
+                    if (score >= 70) {
+                        scoreBadge = `<span class="px-3 py-1.5 text-xs font-black rounded-xl bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-2xs">${score}% MATCH</span>`;
+                        scoreColor = "bg-emerald-50 border-emerald-200 text-emerald-800";
+                        barColor = "bg-emerald-500";
+                    } else if (score >= 45) {
+                        scoreBadge = `<span class="px-3 py-1.5 text-xs font-black rounded-xl bg-amber-100 text-amber-800 border border-amber-200 shadow-2xs">${score}% MATCH</span>`;
+                        scoreColor = "bg-amber-50 border-amber-200 text-amber-800";
+                        barColor = "bg-amber-500";
+                    } else {
+                        scoreBadge = `<span class="px-3 py-1.5 text-xs font-black rounded-xl bg-slate-100 text-slate-700 border border-slate-200">${score}% MATCH</span>`;
+                        scoreColor = "bg-slate-50 border-slate-200 text-slate-700";
+                        barColor = "bg-slate-400";
+                    }
+                }
+
+                let statusBadge = `<span class="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-slate-100 text-slate-600 border border-slate-200">NEW</span>`;
+                if (v.status === 'ANALYZED') statusBadge = `<span class="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-blue-50 text-blue-700 border border-blue-200">ANALYZED</span>`;
+                if (v.status === 'APPLIED') statusBadge = `<span class="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200"><i class="fa-solid fa-check mr-1"></i>APPLIED</span>`;
+                if (v.status === 'SKIPPED') statusBadge = `<span class="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-rose-50 text-rose-700 border border-rose-200">SKIPPED</span>`;
+                if (v.status === 'INVITED') statusBadge = `<span class="px-2.5 py-1 text-[11px] font-extrabold rounded-lg bg-emerald-500 text-white shadow-xs"><i class="fa-solid fa-trophy mr-1"></i>INVITED</span>`;
+
+                const notesInfo = parseMatchNotes(v.notes);
+                const descSnippet = (v.description || 'Описание не указано.').substring(0, 320);
+
+                return `
+                    <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-2xs hover:shadow-sm transition space-y-4">
+                        
+                        <!-- Top Row: Title, Company, Score, Status -->
+                        <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                            <div class="space-y-1 flex-1">
+                                <div class="flex items-center flex-wrap gap-2">
+                                    <a href="${v.url}" target="_blank" class="text-base font-extrabold text-slate-900 hover:text-blue-600 inline-flex items-center transition">
+                                        ${v.title}
+                                        <i class="fa-solid fa-arrow-up-right-from-square text-slate-400 text-xs ml-1.5"></i>
+                                    </a>
+                                    ${statusBadge}
+                                </div>
+                                <div class="flex items-center flex-wrap gap-3 text-xs text-slate-500 font-medium">
+                                    <span class="text-slate-800 font-bold flex items-center gap-1">
+                                        <i class="fa-solid fa-building text-slate-400"></i> ${v.employer}
+                                    </span>
+                                    <span>•</span>
+                                    <span class="text-emerald-700 font-bold flex items-center gap-1">
+                                        <i class="fa-solid fa-money-bill-wave text-emerald-500"></i> ${v.salary_str || 'Зарплата не указана'}
+                                    </span>
+                                    <span>•</span>
+                                    <span class="flex items-center gap-1">
+                                        <i class="fa-solid fa-location-dot text-slate-400"></i> ${v.city || 'Город не указан'}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="flex items-center space-x-2 self-start sm:self-auto">
+                                ${scoreBadge}
+                            </div>
+                        </div>
+
+                        <!-- Middle Row: Description & Requirements Snippet -->
+                        <div class="bg-slate-50/75 rounded-xl p-3.5 border border-slate-200/80 text-xs text-slate-600 space-y-1.5">
+                            <span class="font-bold text-slate-700 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
+                                <i class="fa-solid fa-align-left text-slate-400"></i> Требования и описание вакансии:
+                            </span>
+                            <p class="leading-relaxed text-slate-700">${descSnippet}${v.description && v.description.length > 320 ? '...' : ''}</p>
+                        </div>
+
+                        <!-- Match Breakdown (Strong vs Weak Match) -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                            <!-- Strong Match (Pros / Matched Skills) -->
+                            <div class="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-3 space-y-1.5">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-[11px] font-extrabold text-emerald-800 uppercase tracking-wider flex items-center gap-1">
+                                        <i class="fa-solid fa-circle-check text-emerald-600"></i> Сильные стороны (Match)
+                                    </span>
+                                    <span class="text-[10px] font-bold text-emerald-700">${notesInfo.matchSkills.length} совп.</span>
+                                </div>
+                                <div class="flex flex-wrap gap-1">
+                                    ${notesInfo.matchSkills.length > 0 ? notesInfo.matchSkills.map(s => `
+                                        <span class="px-2 py-0.5 text-[11px] font-bold rounded-md bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                            ✓ ${s}
+                                        </span>
+                                    `).join('') : `<span class="text-xs text-emerald-700 italic">${notesInfo.pros || 'Требуется запуск AI-анализа'}</span>`}
+                                </div>
+                            </div>
+
+                            <!-- Weak Match (Cons / Missing Skills) -->
+                            <div class="bg-amber-50/60 border border-amber-200/80 rounded-xl p-3 space-y-1.5">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-[11px] font-extrabold text-amber-800 uppercase tracking-wider flex items-center gap-1">
+                                        <i class="fa-solid fa-triangle-exclamation text-amber-600"></i> Где слабее (Чего не хватает)
+                                    </span>
+                                    <span class="text-[10px] font-bold text-amber-700">${notesInfo.missingSkills.length} разл.</span>
+                                </div>
+                                <div class="flex flex-wrap gap-1">
+                                    ${notesInfo.missingSkills.length > 0 ? notesInfo.missingSkills.map(s => `
+                                        <span class="px-2 py-0.5 text-[11px] font-semibold rounded-md bg-amber-100 text-amber-800 border border-amber-200">
+                                            ✗ ${s}
+                                        </span>
+                                    `).join('') : `<span class="text-xs text-amber-700 italic">${notesInfo.cons || 'Критичных расхождений не найдено'}</span>`}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Bottom Action Row -->
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                            <!-- Cover letter button -->
+                            <div>
+                                ${v.cover_letter ? `
+                                    <button onclick="openModal('${v.id}')" class="text-xs font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-xl transition flex items-center space-x-1.5">
+                                        <i class="fa-solid fa-envelope-open-text"></i>
+                                        <span>Открыть сопроводительное письмо</span>
+                                    </button>
+                                ` : `
+                                    <span class="text-xs text-slate-400 italic">Письмо будет создано при AI-анализе</span>
+                                `}
+                            </div>
+
+                            <!-- Action Buttons -->
+                            <div class="flex items-center space-x-2 self-end sm:self-auto">
+                                ${v.status !== 'APPLIED' ? `
+                                    <button onclick="applyVacancy('${v.id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center space-x-1.5" title="Откликнуться на HH.ru">
+                                        <i class="fa-solid fa-paper-plane"></i>
+                                        <span>Откликнуться</span>
+                                    </button>
+                                ` : `
+                                    <span class="px-3 py-1.5 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-xl border border-indigo-200">
+                                        <i class="fa-solid fa-check mr-1"></i> Отклик отправлен
+                                    </span>
+                                `}
+
+                                ${v.status !== 'SKIPPED' && v.status !== 'APPLIED' ? `
+                                    <button onclick="skipVacancy('${v.id}')" class="px-3 py-2 bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200 hover:border-rose-200 text-xs font-bold rounded-xl transition" title="Пропустить вакансию">
+                                        <i class="fa-solid fa-xmark mr-1"></i> Пропустить
+                                    </button>
+                                ` : ''}
+                            </div>
+                        </div>
+
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function triggerSearch() {
+            const query = document.getElementById('search-query').value.trim();
+            const count = document.getElementById('search-count').value;
+            const area = document.getElementById('search-area').value;
+            const exp = document.getElementById('search-exp').value;
+
+            const btn = document.getElementById('btn-search');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> Поиск...`;
+
+            try {
+                const res = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: query,
+                        count: parseInt(count),
+                        area: area,
+                        experience: exp,
+                        only_with_salary: false
+                    })
+                });
+                const data = await res.json();
+                showToast(`Найдено вакансий: ${data.found}, новых в базу: ${data.added}`);
+                await loadVacancies();
+            } catch (err) {
+                showToast("Ошибка при сборе вакансий", true);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fa-solid fa-cloud-arrow-down mr-1"></i> Найти`;
+            }
+        }
+
+        async function triggerAnalyze() {
+            const btn = document.getElementById('btn-analyze');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> Анализ...`;
+
+            try {
+                const res = await fetch('/api/analyze', { method: 'POST' });
+                const data = await res.json();
+                showToast(`Проанализировано вакансий: ${data.analyzed}`);
+                await loadVacancies();
+            } catch (err) {
+                showToast("Ошибка при анализе", true);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles mr-1"></i> AI Анализ новых`;
+            }
+        }
+
+        async function applyVacancy(id) {
+            if (!confirm(`Отправить отклик на вакансию #${id}?`)) return;
+            try {
+                const res = await fetch(`/api/apply/${id}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    showToast(`✅ Отклик успешно отправлен на HH.ru!`);
+                } else {
+                    showToast(`❌ ${data.message}`, true);
+                }
+                await loadVacancies();
+            } catch (err) {
+                showToast("Ошибка при отправке отклика", true);
+            }
+        }
+
+        async function skipVacancy(id) {
+            try {
+                await fetch(`/api/skip/${id}`, { method: 'POST' });
+                showToast(`Вакансия #${id} пропущена`);
+                await loadVacancies();
+            } catch (err) {
+                showToast("Ошибка при пропуске", true);
+            }
+        }
+
+        function openModal(id) {
+            currentEditingId = id;
+            const item = vacanciesData.find(v => v.id == id);
+            if (!item) return;
+
+            document.getElementById('modal-title').innerText = item.title;
+            document.getElementById('modal-subtitle').innerText = `${item.employer} (${item.city || 'Город не указан'})`;
+            document.getElementById('modal-analysis').innerText = item.notes || 'Анализ: без заметок.';
+            document.getElementById('modal-textarea').value = item.cover_letter || '';
+            
+            const scoreBadge = document.getElementById('modal-score-badge');
+            const score = parseInt(item.match_score) || 0;
+            scoreBadge.innerText = `${score}% Match`;
+            scoreBadge.className = score >= 70 ? 'px-2 py-0.5 text-xs font-black rounded-md bg-emerald-100 text-emerald-800' : 'px-2 py-0.5 text-xs font-black rounded-md bg-amber-100 text-amber-800';
+
+            document.getElementById('modal-letter').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('modal-letter').classList.add('hidden');
+            currentEditingId = null;
+        }
+
+        function openResumeEditModal() {
+            if (resumeSummaryData && resumeSummaryData.full_text) {
+                document.getElementById('resume-edit-textarea').value = resumeSummaryData.full_text;
+            }
+            document.getElementById('modal-resume-edit').classList.remove('hidden');
+        }
+
+        function closeResumeModal() {
+            document.getElementById('modal-resume-edit').classList.add('hidden');
+        }
+
+        async function saveResumeText() {
+            const text = document.getElementById('resume-edit-textarea').value.trim();
+            if (!text) {
+                showToast("Текст резюме не может быть пустым", true);
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/update-resume-text', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    showToast("✅ Резюме успешно сохранено!");
+                    closeResumeModal();
+                    await loadResumeSummary();
+                }
+            } catch (e) {
+                showToast("Ошибка при сохранении резюме", true);
+            }
+        }
+
+        async function saveModalLetter() {
+            if (!currentEditingId) return;
+            const text = document.getElementById('modal-textarea').value;
+            try {
+                await fetch(`/api/letter/${currentEditingId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ letter: text })
+                });
+                showToast("Письмо успешно сохранено!");
+                closeModal();
+                await loadVacancies();
+            } catch (err) {
+                showToast("Ошибка при сохранении письма", true);
+            }
+        }
+
+        function showToast(text, isError = false) {
+            const toast = document.getElementById('toast');
+            const icon = document.getElementById('toast-icon');
+            const tText = document.getElementById('toast-text');
+
+            tText.innerText = text;
+            if (isError) {
+                icon.className = "fa-solid fa-circle-exclamation text-rose-400";
+            } else {
+                icon.className = "fa-solid fa-check text-emerald-400";
+            }
+
+            toast.classList.remove('hidden');
+            setTimeout(() => { toast.classList.add('hidden'); }, 3500);
+        }
+
+        initPage();
+    </script>
+</body>
+</html>
