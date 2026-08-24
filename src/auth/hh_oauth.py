@@ -155,6 +155,63 @@ class HHOAuthManager:
         data = response.json()
         return data.get("items", [])
 
+    def get_resume_details(self, resume_id: str) -> Dict[str, Any]:
+        """Получение подробных данных конкретного резюме по ID с HeadHunter."""
+        token = self.get_valid_access_token()
+        if not token:
+            raise RuntimeError("Требуется авторизация: access_token не найден.")
+
+        url = f"{self.base_api_url}/resumes/{resume_id}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "User-Agent": settings.HH_USER_AGENT,
+            "HH-User-Agent": settings.HH_USER_AGENT,
+        }
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 401:
+            new_tokens = self.refresh_token()
+            if new_tokens:
+                headers["Authorization"] = f"Bearer {new_tokens['access_token']}"
+                response = requests.get(url, headers=headers, timeout=15)
+
+        response.raise_for_status()
+        return response.json()
+
+    def download_and_format_resume(self, resume_id: str) -> str:
+        """Скачивает резюме с HeadHunter и форматирует в читаемый текст для AI-анализа."""
+        data = self.get_resume_details(resume_id)
+        
+        parts = []
+        name = f"{data.get('last_name', '')} {data.get('first_name', '')} {data.get('middle_name', '')}".strip()
+        if name:
+            parts.append(f"# Имя: {name}")
+
+        title = data.get("title", "")
+        if title:
+            parts.append(f"# Желаемая должность: {title}")
+
+        skills = [s.get("name") for s in data.get("skill_set", []) if s.get("name")]
+        if skills:
+            parts.append(f"## Ключевые навыки:\n{', '.join(skills)}")
+
+        skills_text = data.get("skills", "")
+        if skills_text:
+            parts.append(f"## Дополнительные навыки и о себе:\n{skills_text}")
+
+        experience = data.get("experience", [])
+        if experience:
+            exp_parts = ["## Опыт работы:"]
+            for exp in experience:
+                comp = exp.get("company", "Компания")
+                pos = exp.get("position", "Должность")
+                start = exp.get("start", "")
+                end = exp.get("end", "по настоящее время")
+                desc = exp.get("description", "")
+                exp_parts.append(f"### {pos} в {comp} ({start} — {end})\n{desc}\n")
+            parts.append("\n".join(exp_parts))
+
+        return "\n\n".join(parts)
+
 
 def re_sub_env(content: str, key: str, value: str) -> str:
     import re

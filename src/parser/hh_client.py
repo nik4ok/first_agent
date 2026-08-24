@@ -184,13 +184,19 @@ class HHClient:
                     if not title or len(title) < 3:
                         continue
 
-                    # Ищем карточку вакансии
-                    card = link.find_parent("div", class_=re.compile(r"vacancy-card|serp-item", re.I)) or link.find_parent("div")
+                    # Ищем карточку вакансии (поднимаемся по дереву DOM)
+                    card = (
+                        link.find_parent(attrs={"data-qa": re.compile(r"vacancy-serp__vacancy", re.I)})
+                        or link.find_parent("div", class_=re.compile(r"vacancy-card|serp-item", re.I))
+                        or link.find_parent("li")
+                        or link.find_parent("div")
+                    )
                     
                     # Компания
                     comp_el = (
                         card.find("span", attrs={"data-qa": re.compile(r"company|employer", re.I)})
                         or card.find("a", attrs={"data-qa": re.compile(r"company|employer", re.I)})
+                        or card.find(class_=re.compile(r"company|employer", re.I))
                         if card
                         else None
                     )
@@ -213,12 +219,18 @@ class HHClient:
                     # Требования и сниппет
                     snippet_parts = []
                     if card:
-                        for snip in card.find_all(attrs={"data-qa": re.compile(r"snippet", re.I)}):
+                        for snip in card.find_all(attrs={"data-qa": re.compile(r"snippet|requirement|responsibility", re.I)}):
                             txt = snip.get_text(" ", strip=True)
-                            if txt:
+                            if txt and txt not in snippet_parts:
                                 snippet_parts.append(txt)
 
-                    description = "\n".join(snippet_parts) if snippet_parts else f"Позиция {title} в {employer}"
+                        if not snippet_parts:
+                            for snip in card.find_all(["div", "p", "span"], class_=re.compile(r"snippet|requirement|responsibility", re.I)):
+                                txt = snip.get_text(" ", strip=True)
+                                if txt and txt not in snippet_parts:
+                                    snippet_parts.append(txt)
+
+                    description = " | ".join(snippet_parts) if snippet_parts else f"Позиция {title} в компании {employer}"
 
                     record = {
                         "id": v_id,
@@ -268,51 +280,54 @@ class HHClient:
         Основной метод сбора: сначала пробует официальный API,
         при 403 (отсутствии ключа) мягко переключается на веб-сбор.
         """
-        # Если задан access_token, пробуем через API
-        if self.access_token:
-            try:
-                url = f"{self.base_url}/vacancies"
-                params = {
-                    "text": text,
-                    "area": area or "113",
-                    "per_page": min(max_vacancies, 50),
-                    "page": 0,
-                    "order_by": "publication_time",
-                }
-                if experience:
-                    params["experience"] = experience
-                if only_with_salary:
-                    params["only_with_salary"] = "true"
+        try:
+            url = f"{self.base_url}/vacancies"
+            params = {
+                "text": text,
+                "area": area or "113",
+                "per_page": min(max_vacancies, 50),
+                "page": 0,
+                "order_by": "publication_time",
+            }
+            if experience:
+                params["experience"] = experience
+            if only_with_salary:
+                params["only_with_salary"] = "true"
 
-                resp = requests.get(url, headers=self.api_headers, params=params, timeout=10)
-                if resp.status_code == 200:
-                    items = resp.json().get("items", [])
-                    results = []
-                    for item in items[:max_vacancies]:
-                        v_id = str(item.get("id"))
-                        sal_info = self.parse_salary_dict(item.get("salary"))
-                        results.append({
-                            "id": v_id,
-                            "title": item.get("name", ""),
-                            "employer": item.get("employer", {}).get("name", "Не указан"),
-                            "city": item.get("area", {}).get("name", ""),
-                            "salary_str": sal_info["salary_str"],
-                            "salary_from": sal_info["salary_from"],
-                            "salary_to": sal_info["salary_to"],
-                            "currency": sal_info["currency"],
-                            "skills": "",
-                            "url": item.get("alternate_url", f"https://hh.ru/vacancy/{v_id}"),
-                            "published_at": item.get("published_at", "")[:10],
-                            "description": f"{item.get('snippet', {}).get('requirement', '')} {item.get('snippet', {}).get('responsibility', '')}".strip(),
-                            "status": "NEW",
-                            "match_score": None,
-                            "cover_letter": "",
-                            "notes": "",
-                        })
-                    if results:
-                        return results
-            except Exception as e:
-                logger.warning(f"Официальный API недоступен, переключаемся на Web-режим: {e}")
+            resp = requests.get(url, headers=self.api_headers, params=params, timeout=10)
+            if resp.status_code == 200:
+                items = resp.json().get("items", [])
+                results = []
+                for item in items[:max_vacancies]:
+                    v_id = str(item.get("id"))
+                    sal_info = self.parse_salary_dict(item.get("salary"))
+                    req_txt = self.clean_html(item.get("snippet", {}).get("requirement", "") or "")
+                    resp_txt = self.clean_html(item.get("snippet", {}).get("responsibility", "") or "")
+                    desc_parts = [p for p in [req_txt, resp_txt] if p]
+                    desc_full = " | ".join(desc_parts) if desc_parts else f"Позиция {item.get('name', '')} в компании {item.get('employer', {}).get('name', '')}"
+
+                    results.append({
+                        "id": v_id,
+                        "title": item.get("name", ""),
+                        "employer": item.get("employer", {}).get("name", "Не указан"),
+                        "city": item.get("area", {}).get("name", ""),
+                        "salary_str": sal_info["salary_str"],
+                        "salary_from": sal_info["salary_from"],
+                        "salary_to": sal_info["salary_to"],
+                        "currency": sal_info["currency"],
+                        "skills": "",
+                        "url": item.get("alternate_url", f"https://hh.ru/vacancy/{v_id}"),
+                        "published_at": item.get("published_at", "")[:10],
+                        "description": desc_full,
+                        "status": "NEW",
+                        "match_score": None,
+                        "cover_letter": "",
+                        "notes": "",
+                    })
+                if results:
+                    return results
+        except Exception as e:
+            logger.warning(f"Официальный API недоступен, переключаемся на Web-режим: {e}")
 
         # Fallback на Web-сбор
         return self.fetch_via_web(

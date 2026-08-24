@@ -138,10 +138,14 @@
                     </div>
                 </div>
 
-                <div class="flex items-center space-x-2">
+                <div class="flex items-center flex-wrap gap-2">
+                    <button onclick="syncResumeFromHH()" id="btn-sync-hh-resume" class="px-3.5 py-2 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/30 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 shadow-2xs">
+                        <i class="fa-solid fa-cloud-arrow-down text-emerald-400"></i>
+                        <span>Импортировать с HeadHunter</span>
+                    </button>
                     <button onclick="openResumeEditModal()" class="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white border border-white/15 text-xs font-bold rounded-xl transition flex items-center space-x-1.5">
                         <i class="fa-solid fa-pen-to-square"></i>
-                        <span>Редактировать текст резюме</span>
+                        <span>Редактировать текст</span>
                     </button>
                 </div>
             </div>
@@ -363,6 +367,16 @@
             await loadResumeSummary();
             await loadResumes();
             await loadVacancies();
+
+            const queryInput = document.getElementById('search-query');
+            if (queryInput) {
+                queryInput.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        triggerSearch();
+                    }
+                });
+            }
         }
 
         function clearSearchInput() {
@@ -693,7 +707,7 @@
 
             const btn = document.getElementById('btn-search');
             btn.disabled = true;
-            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> Поиск...`;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> Поиск и AI скоринг...`;
 
             try {
                 const res = await fetch('/api/search', {
@@ -708,8 +722,14 @@
                     })
                 });
                 const data = await res.json();
-                showToast(`Найдено вакансий: ${data.found}, новых в базу: ${data.added}`);
+                showToast(`Найдено вакансий: ${data.found}, добавлено с AI скорингом: ${data.added}`);
                 await loadVacancies();
+
+                // Плавная прокрутка к свежим результатам поиска
+                const container = document.getElementById('vacancies-container');
+                if (container) {
+                    container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
             } catch (err) {
                 showToast("Ошибка при сборе вакансий", true);
             } finally {
@@ -783,6 +803,29 @@
         function closeModal() {
             document.getElementById('modal-letter').classList.add('hidden');
             currentEditingId = null;
+        }
+
+        async function syncResumeFromHH() {
+            const btn = document.getElementById('btn-sync-hh-resume');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin text-emerald-400"></i> <span>Импорт с HH...</span>`;
+
+            try {
+                const res = await fetch('/api/sync-hh-resume', { method: 'POST' });
+                const data = await res.json();
+                if (res.ok && data.status === 'ok') {
+                    showToast("🎉 Текст резюме успешно импортирован из вашего профиля HeadHunter!");
+                    await loadResumeSummary();
+                    await loadResumes();
+                } else {
+                    showToast(data.detail || "Авторизуйтесь в HeadHunter для импорта резюме", true);
+                }
+            } catch (err) {
+                showToast("Ошибка при импорте резюме с HeadHunter", true);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fa-solid fa-cloud-arrow-down text-emerald-400"></i> <span>Импортировать с HeadHunter</span>`;
+            }
         }
 
         function openResumeEditModal() {

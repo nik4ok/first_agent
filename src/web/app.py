@@ -102,9 +102,34 @@ async def select_resume(req: ResumeSelectRequest):
     return {"status": "ok", "selected_id": req.resume_id}
 
 
+@app.post("/api/sync-hh-resume")
+async def sync_hh_resume(req: Optional[ResumeSelectRequest] = None):
+    """Автоматическая загрузка полного текста резюме с HeadHunter в data/my_resume.txt."""
+    resume_id = (req.resume_id if req and req.resume_id else None) or settings.HH_RESUME_ID
+    if not resume_id:
+        resumes = auth_mgr.get_my_resumes()
+        if resumes:
+            resume_id = resumes[0].get("id")
+            update_env_variable("HH_RESUME_ID", resume_id)
+            settings.HH_RESUME_ID = resume_id
+
+    if not resume_id:
+        raise HTTPException(status_code=400, detail="Не указан ID резюме и нет доступных резюме на HH.")
+
+    try:
+        formatted_text = auth_mgr.download_and_format_resume(resume_id)
+        if formatted_text:
+            settings.RESUME_PATH.write_text(formatted_text, encoding="utf-8")
+        summary = analyzer.get_resume_summary()
+        return {"status": "ok", "resume_id": resume_id, "summary": summary}
+    except Exception as e:
+        logger.error(f"Ошибка синхронизации резюме с HH: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки резюме с HH: {e}")
+
+
 @app.get("/api/vacancies")
 async def get_vacancies():
-    """Получение списка вакансий из Excel."""
+    """Получение списка вакансий из Excel (свежие сверху)."""
     df = storage.load_all()
     if df.empty:
         return []
@@ -136,12 +161,14 @@ async def get_vacancies():
                 item[col_en] = str(row[col_en]) if row[col_en] != "" else None
         result.append(item)
 
+    # Самые свежие вакансии всегда в начале списка
+    result.reverse()
     return result
 
 
 @app.post("/api/search")
 async def api_search(req: SearchRequest):
-    """Сбор свежих вакансий по любому запросу с HeadHunter в Excel."""
+    """Сбор свежих вакансий по любому запросу с HeadHunter в Excel и мгновенный AI-скоринг."""
     client = HHClient()
     query = req.query.strip() or settings.SEARCH_TEXT or "IT"
     vacancies = client.fetch_and_normalize_vacancies(
@@ -151,6 +178,26 @@ async def api_search(req: SearchRequest):
         only_with_salary=req.only_with_salary,
         max_vacancies=req.count,
     )
+
+    # Автоматически анализируем и генерируем письма для найденных вакансий
+    for v in vacancies:
+        match_info = analyzer.analyze_match(v["title"], v.get("description", ""), v.get("skills", ""))
+        v["match_score"] = match_info.get("score", 50)
+        matching_skills = ", ".join(match_info.get("matching_skills", []))
+        missing_skills = ", ".join(match_info.get("missing_skills", []))
+        pros = match_info.get("pros", "")
+        cons = match_info.get("cons", "")
+        
+        notes_str = f"Плюсы: {pros} | Минусы: {cons}"
+        if matching_skills:
+            notes_str += f" | Match Skills: {matching_skills}"
+        if missing_skills:
+            notes_str += f" | Missing Skills: {missing_skills}"
+
+        v["notes"] = notes_str
+        v["cover_letter"] = analyzer.generate_cover_letter(v["title"], v["employer"], v.get("description", ""), match_info)
+        v["status"] = "ANALYZED"
+
     added = storage.save_new_vacancies(vacancies)
     return {"status": "ok", "found": len(vacancies), "added": added}
 

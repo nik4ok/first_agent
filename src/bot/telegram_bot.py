@@ -642,7 +642,16 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
         settings.HH_RESUME_ID = r_id
         await callback.answer(f"Резюме {r_id} выбрано!")
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.reply(f"✅ **Резюме `{r_id}` сохранено как основное для откликов!**", parse_mode="Markdown")
+
+        # Автоматически пробуем импортировать полный текст этого резюме для AI
+        try:
+            formatted_text = auth_mgr.download_and_format_resume(r_id)
+            if formatted_text:
+                settings.RESUME_PATH.write_text(formatted_text, encoding="utf-8")
+        except Exception:
+            pass
+
+        await callback.message.reply(f"✅ **Резюме `{r_id}` сохранено как основное для откликов, а его текст загружен для AI-скоринга!**", parse_mode="Markdown")
 
     @dp.callback_query(F.data.startswith("apply:"))
     async def cb_apply(callback: types.CallbackQuery):
