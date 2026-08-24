@@ -3,7 +3,8 @@ venv/
 __pycache__/
 *.pyc
 data/*.xlsx
-data/hh_tokens.json
-data/negotiations_state.json
+data/*.json
+data/*.png
+data/*.txt
 !data/.gitkeep
 .DS_Store
