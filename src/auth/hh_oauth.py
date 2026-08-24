@@ -131,6 +131,46 @@ class HHOAuthManager:
         tokens = self.load_tokens()
         return tokens.get("access_token") or None
 
+    def get_user_info(self) -> Optional[Dict[str, Any]]:
+        """Получение информации об авторизованном пользователе через /me."""
+        token = self.get_valid_access_token()
+        if not token:
+            return None
+
+        url = f"{self.base_api_url}/me"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "User-Agent": settings.HH_USER_AGENT,
+            "HH-User-Agent": settings.HH_USER_AGENT,
+        }
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 401:
+                new_tokens = self.refresh_token()
+                if new_tokens:
+                    headers["Authorization"] = f"Bearer {new_tokens['access_token']}"
+                    response = requests.get(url, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                first_name = data.get("first_name", "")
+                last_name = data.get("last_name", "")
+                full_name = f"{first_name} {last_name}".strip() or "Пользователь HH"
+                counters = data.get("counters", {})
+                return {
+                    "id": data.get("id"),
+                    "full_name": full_name,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "email": data.get("email"),
+                    "phone": data.get("phone"),
+                    "resumes_count": counters.get("resumes_count", 0),
+                    "is_applicant": data.get("is_applicant", True),
+                }
+        except Exception as e:
+            logger.warning(f"Не удалось получить профиль /me: {e}")
+        return None
+
     def get_my_resumes(self) -> List[Dict[str, Any]]:
         """Получение списка резюме пользователя из HeadHunter."""
         token = self.get_valid_access_token()

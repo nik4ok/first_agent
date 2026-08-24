@@ -2,6 +2,7 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
+import pandas as pd
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
@@ -41,6 +42,7 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.row(
         KeyboardButton(text="🔍 Поиск вакансий"),
+        KeyboardButton(text="🚀 Автопилот"),
         KeyboardButton(text="🤖 AI-анализ базы"),
     )
     builder.row(
@@ -62,6 +64,7 @@ def get_main_inline_menu() -> InlineKeyboardMarkup:
     """Создает интерактивную панель управления."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🔍 Найти вакансии", callback_data="menu_search")
+    builder.button(text="🚀 Автопилот (Топ-отклики)", callback_data="menu_autopilot")
     builder.button(text="🤖 Запустить AI-анализ", callback_data="menu_analyze")
     builder.button(text="📊 Статистика", callback_data="menu_stats")
     builder.button(text="📥 Скачать Excel", callback_data="menu_excel")
@@ -69,7 +72,7 @@ def get_main_inline_menu() -> InlineKeyboardMarkup:
     builder.button(text="⚙️ Настройки поиска", callback_data="menu_settings")
     builder.button(text="🔐 Авторизация в HH", callback_data="menu_auth")
     builder.button(text="📝 Текст резюме", callback_data="menu_resume_text")
-    builder.adjust(2, 2, 2, 2)
+    builder.adjust(2, 2, 2, 2, 1)
     return builder.as_markup()
 
 
@@ -90,6 +93,7 @@ async def setup_bot_commands(bot: Bot):
     commands = [
         BotCommand(command="start", description="🏠 Главное меню и статус"),
         BotCommand(command="menu", description="📱 Открыть панель управления"),
+        BotCommand(command="autopilot", description="🚀 Авто-отклики (топ-вакансии)"),
         BotCommand(command="search", description="🔍 Поиск вакансий (<запрос>)"),
         BotCommand(command="analyze", description="🤖 Запустить AI-анализ базы"),
         BotCommand(command="stats", description="📊 Статистика базы вакансий"),
@@ -547,6 +551,76 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
             reply_markup=get_main_inline_menu(),
             parse_mode="Markdown",
         )
+
+    @dp.message(F.text.lower().contains("автопилот") | Command("autopilot"))
+    async def cmd_autopilot(message: types.Message):
+        """Автономная отправка откликов на лучшие вакансии."""
+        args = message.text.split()
+        max_count = 10
+        if len(args) > 1 and args[1].isdigit():
+            max_count = int(args[1])
+
+        df = storage.load_all()
+        if df.empty:
+            await message.answer("⚠️ База вакансий пуста. Сначала выполните поиск вакансий через меню.")
+            return
+
+        id_col = "ID Вакансии" if "ID Вакансии" in df.columns else "id"
+        title_col = "Название вакансии" if "Название вакансии" in df.columns else "title"
+        comp_col = "Компания" if "Компания" in df.columns else "employer"
+        status_col = "Статус" if "Статус" in df.columns else "status"
+        score_col = "Score (%)" if "Score (%)" in df.columns else "match_score"
+        desc_col = "Полное описание" if "Полное описание" in df.columns else "description"
+        letter_col = "Сопроводительное письмо" if "Сопроводительное письмо" in df.columns else "cover_letter"
+
+        unapplied = df[~df[status_col].isin(["APPLIED", "SKIPPED", "INVITED"])].copy()
+        if unapplied.empty:
+            await message.answer("ℹ️ Нет новых неотправленных вакансий в базе. Все актуальные отклики уже сделаны.")
+            return
+
+        unapplied["num_score"] = pd.to_numeric(unapplied[score_col], errors="coerce").fillna(0)
+        candidates = unapplied[unapplied["num_score"] >= 70].sort_values(by="num_score", ascending=False)
+        if candidates.empty:
+            candidates = unapplied.sort_values(by="num_score", ascending=False).head(max_count)
+        else:
+            candidates = candidates.head(max_count)
+
+        status_msg = await message.answer(
+            f"🚀 **Запущен автопилот:** отбор до {len(candidates)} лучших вакансий (Match ≥ 70%)...\n"
+            f"⏳ Безопасная отправка с анти-спам интервалом 2 сек.",
+            parse_mode="Markdown"
+        )
+
+        applied_cnt = 0
+        for _, row in candidates.iterrows():
+            v_id = str(row[id_col])
+            title = str(row.get(title_col, ""))
+            employer = str(row.get(comp_col, ""))
+            letter = str(row.get(letter_col, "") or "")
+            desc = str(row.get(desc_col, "") or "")
+
+            if not letter or len(letter) < 20:
+                match_info = analyzer.analyze_match(title, desc, "")
+                letter = analyzer.generate_cover_letter(title, employer, desc, match_info)
+
+            res = responder.apply(vacancy_id=v_id, resume_id=settings.HH_RESUME_ID or None, message=letter)
+            if res.get("success"):
+                storage.update_status(vacancy_id=v_id, status="APPLIED", cover_letter=letter)
+                applied_cnt += 1
+            await asyncio.sleep(2)
+
+        await status_msg.edit_text(
+            f"🎉 **Автопилот успешно завершен!**\n\n"
+            f"✅ Отправлено откликов: **{applied_cnt}** из {len(candidates)}\n"
+            f"📄 Привязано резюме: `{settings.HH_RESUME_ID or 'по умолчанию'}`",
+            reply_markup=get_main_inline_menu(),
+            parse_mode="Markdown",
+        )
+
+    @dp.callback_query(F.data == "menu_autopilot")
+    async def cb_menu_autopilot(callback: types.CallbackQuery):
+        await callback.answer()
+        await cmd_autopilot(callback.message)
 
     @dp.callback_query(F.data == "menu_analyze")
     async def cb_menu_analyze(callback: types.CallbackQuery):

@@ -17,6 +17,45 @@ from src.scheduler import JobHuntingScheduler
 from src.web import run_web_dashboard
 
 
+def handle_browser_login():
+    """Вход в HeadHunter через браузер Playwright для сохранения постоянной сессии автооткликов."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("❌ Playwright не установлен. Выполните: pip install playwright && playwright install chromium")
+        return
+
+    print("\n🌐 === ВХОД В HEADHUNTER ЧЕРЕЗ БРАУЗЕР (PLAYWRIGHT) ===")
+    print("Открываю браузер Chromium...")
+    print("1. В открывшемся окне выполните вход в ваш аккаунт HeadHunter.")
+    print("2. После успешного входа вернитесь сюда и нажмите Enter для сохранения сессии.\n")
+
+    session_file = settings.DATA_DIR / "browser_state.json"
+    with sync_playwright() as p:
+        launch_args = ["--disable-blink-features=AutomationControlled"]
+        try:
+            browser = p.chromium.launch(headless=False, args=launch_args)
+        except Exception as e_bundled:
+            try:
+                browser = p.chromium.launch(channel="chrome", headless=False, args=launch_args)
+            except Exception:
+                print(f"❌ Ошибка запуска браузера: {e_bundled}")
+                print("💡 Выполните установку браузера: ./venv/bin/playwright install chromium")
+                return
+
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 800},
+            storage_state=str(session_file) if session_file.exists() else None,
+        )
+        page = context.new_page()
+        page.goto("https://hh.ru/account/login")
+        input("\n👉 Нажмите [ENTER] здесь после того, как вошли в свой профиль на hh.ru: ")
+        context.storage_state(path=str(session_file))
+        print(f"\n🎉 Сессия успешно сохранена в {session_file.name}! Теперь фоновые автоотклики через Playwright активны.")
+        browser.close()
+
+
 def handle_auth():
     """Консольная авторизация в HeadHunter по OAuth."""
     mgr = HHOAuthManager()
@@ -162,6 +201,9 @@ def main():
     # auth
     subparsers.add_parser("auth", help="Авторизоваться в HeadHunter по OAuth")
 
+    # browser-login
+    subparsers.add_parser("browser-login", help="Вход в HeadHunter через браузер Playwright (для автоматических откликов)")
+
     # bot
     subparsers.add_parser("bot", help="Запустить Telegram бота и планировщик")
 
@@ -176,6 +218,8 @@ def main():
 
     if args.command == "auth":
         handle_auth()
+    elif args.command == "browser-login":
+        handle_browser_login()
     elif args.command == "parse":
         handle_parse(
             query=args.query,

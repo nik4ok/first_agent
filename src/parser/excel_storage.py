@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Set
+from typing import List, Dict, Any, Set, Tuple
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -72,37 +72,59 @@ class ExcelStorage:
             return pd.DataFrame(columns=list(self.COLUMN_NAMES_RU.values()))
         return pd.read_excel(self.file_path, dtype=str)
 
-    def save_new_vacancies(self, vacancies: List[Dict[str, Any]]) -> int:
+    def save_or_update_vacancies(self, vacancies: List[Dict[str, Any]]) -> Tuple[int, int]:
         """
-        Добавляет новые вакансии в файл Excel, не затирая существующие.
-        Возвращает количество добавленных записей.
+        Сохраняет новые вакансии и обновляет данные (описание, скор, навыки) для уже существующих.
+        Возвращает (added_count, updated_count).
         """
         if not vacancies:
-            return 0
+            return 0, 0
 
-        existing_ids = self.get_existing_ids()
-        new_items = [v for v in vacancies if str(v.get("id")) not in existing_ids]
+        existing_df = self.load_all()
+        id_col = "ID Вакансии" if "ID Вакансии" in existing_df.columns else "id"
 
-        if not new_items:
-            return 0
+        existing_ids = set()
+        if not existing_df.empty and id_col in existing_df.columns:
+            existing_ids = set(existing_df[id_col].dropna().astype(str).tolist())
 
-        new_df = pd.DataFrame(new_items)
-        
-        # Переименовываем столбцы на понятные русские названия
-        new_df = new_df.rename(columns=self.COLUMN_NAMES_RU)
+        new_items = []
+        updated_count = 0
 
-        if self.file_path.exists():
-            try:
-                existing_df = pd.read_excel(self.file_path, dtype=str)
+        # Обновляем существующие записи в DataFrame
+        for v in vacancies:
+            v_id = str(v.get("id"))
+            if v_id in existing_ids:
+                mask = existing_df[id_col].astype(str) == v_id
+                if mask.any():
+                    # Обновляем поля, если в новых данных есть значения
+                    for key, val in v.items():
+                        ru_col = self.COLUMN_NAMES_RU.get(key, key)
+                        if ru_col in existing_df.columns and val is not None and str(val).strip():
+                            existing_df.loc[mask, ru_col] = str(val)
+                    updated_count += 1
+            else:
+                new_items.append(v)
+
+        if new_items:
+            new_df = pd.DataFrame(new_items)
+            new_df = new_df.rename(columns=self.COLUMN_NAMES_RU)
+            if not existing_df.empty:
                 combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-            except Exception:
+            else:
                 combined_df = new_df
         else:
-            combined_df = new_df
+            combined_df = existing_df
 
-        # Сохраняем в Excel с форматированием
         self._write_styled_excel(combined_df)
-        return len(new_items)
+        return len(new_items), updated_count
+
+    def save_new_vacancies(self, vacancies: List[Dict[str, Any]]) -> int:
+        """
+        Добавляет новые вакансии и обновляет существующие.
+        Возвращает общее число добавленных + обновленных.
+        """
+        added, updated = self.save_or_update_vacancies(vacancies)
+        return added if added > 0 else updated
 
     def update_status(
         self,

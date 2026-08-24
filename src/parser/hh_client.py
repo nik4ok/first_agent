@@ -1,6 +1,8 @@
-import re
+import concurrent.futures
+from datetime import datetime
 import logging
-from typing import List, Dict, Any, Optional
+import re
+from typing import List, Dict, Any, Optional, Tuple
 import requests
 from bs4 import BeautifulSoup
 
@@ -11,9 +13,9 @@ logger = logging.getLogger(__name__)
 
 class HHClient:
     """
-    Клиент для HeadHunter с поддержкой официального API и Web-парсинга:
-    - Официальный API (api.hh.ru) при наличии HH_ACCESS_TOKEN / авторизации
-    - Автоматический Web-fallback при отсутствии токена или блокировках edge-антибота
+    Клиент для HeadHunter с поддержкой официального API и глубокого Web-парсинга:
+    - Поиск вакансий через официальный API или web-выдачу hh.ru
+    - Параллельный сбор полных описаний (требования, обязанности, условия) и ключевых навыков
     """
 
     WEB_HEADERS = {
@@ -83,7 +85,7 @@ class HHClient:
 
     @staticmethod
     def parse_salary_text(raw_text: str) -> Dict[str, Any]:
-        """Парсинг строки зарплаты из HTML (например 'от 120 000 до 180 000 руб.')."""
+        """Парсинг строки зарплаты из HTML."""
         if not raw_text or "не указана" in raw_text.lower():
             return {
                 "salary_from": None,
@@ -116,6 +118,30 @@ class HHClient:
             "salary_str": cleaned,
         }
 
+    def fetch_vacancy_full_details(self, vacancy_id: str) -> Tuple[str, List[str]]:
+        """
+        Загрузка полного описания вакансии и списка навыков со страницы hh.ru/vacancy/{id}.
+        """
+        url = f"https://hh.ru/vacancy/{vacancy_id}"
+        try:
+            resp = requests.get(url, headers=self.WEB_HEADERS, timeout=7)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                desc_el = (
+                    soup.find(attrs={"data-qa": re.compile(r"vacancy-description|vacancy_description", re.I)})
+                    or soup.find("div", class_=re.compile(r"vacancy-description|g-user-content", re.I))
+                )
+                skills_els = soup.find_all(attrs={"data-qa": re.compile(r"skills-element|skill", re.I)})
+                skills = [s.get_text(strip=True) for s in skills_els if s.get_text(strip=True)]
+
+                desc_text = desc_el.get_text(separator=" ", strip=True) if desc_el else ""
+                # Очищаем множественные пробелы
+                desc_text = re.sub(r"\s+", " ", desc_text).strip()
+                return desc_text, skills
+        except Exception as e:
+            logger.debug(f"Не удалось загрузить детальное описание для {vacancy_id}: {e}")
+        return "", []
+
     def fetch_via_web(
         self,
         text: str = "Python",
@@ -123,9 +149,10 @@ class HHClient:
         experience: Optional[str] = None,
         only_with_salary: bool = False,
         max_vacancies: int = 20,
+        fetch_full_description: bool = True,
     ) -> List[Dict[str, Any]]:
         """
-        Поиск и сбор вакансий через Web-интерфейс hh.ru (не требует API ключей).
+        Поиск вакансий через Web-выдачу hh.ru с параллельным сбором полных описаний.
         """
         results: List[Dict[str, Any]] = []
         page = 0
@@ -184,14 +211,14 @@ class HHClient:
                     if not title or len(title) < 3:
                         continue
 
-                    # Ищем карточку вакансии (поднимаемся по дереву DOM)
+                    # Ищем карточку вакансии (article / div)
                     card = (
-                        link.find_parent(attrs={"data-qa": re.compile(r"vacancy-serp__vacancy", re.I)})
+                        link.find_parent("article")
+                        or link.find_parent(attrs={"data-qa": re.compile(r"vacancy-serp__vacancy", re.I)})
                         or link.find_parent("div", class_=re.compile(r"vacancy-card|serp-item", re.I))
                         or link.find_parent("li")
-                        or link.find_parent("div")
                     )
-                    
+
                     # Компания
                     comp_el = (
                         card.find("span", attrs={"data-qa": re.compile(r"company|employer", re.I)})
@@ -216,21 +243,17 @@ class HHClient:
                     city_el = card.find(attrs={"data-qa": re.compile(r"address|location", re.I)}) if card else None
                     city = city_el.get_text(strip=True) if city_el else ""
 
-                    # Требования и сниппет
-                    snippet_parts = []
-                    if card:
-                        for snip in card.find_all(attrs={"data-qa": re.compile(r"snippet|requirement|responsibility", re.I)}):
-                            txt = snip.get_text(" ", strip=True)
-                            if txt and txt not in snippet_parts:
-                                snippet_parts.append(txt)
-
-                        if not snippet_parts:
-                            for snip in card.find_all(["div", "p", "span"], class_=re.compile(r"snippet|requirement|responsibility", re.I)):
-                                txt = snip.get_text(" ", strip=True)
-                                if txt and txt not in snippet_parts:
-                                    snippet_parts.append(txt)
-
-                    description = " | ".join(snippet_parts) if snippet_parts else f"Позиция {title} в компании {employer}"
+                    # Дата публикации / обнаружения
+                    date_el = (
+                        card.find("time")
+                        or card.find(attrs={"data-qa": re.compile(r"vacancy-serp__vacancy-date|publication-date|vacancy-date", re.I)})
+                        or card.find("span", class_=re.compile(r"date|publication", re.I))
+                        if card
+                        else None
+                    )
+                    pub_date = date_el.get("datetime") or date_el.get_text(strip=True) if date_el else ""
+                    if not pub_date:
+                        pub_date = datetime.now().strftime("%Y-%m-%d %H:%M")
 
                     record = {
                         "id": v_id,
@@ -243,8 +266,8 @@ class HHClient:
                         "currency": salary_info["currency"],
                         "skills": "",
                         "url": f"https://hh.ru/vacancy/{v_id}",
-                        "published_at": "",
-                        "description": description,
+                        "published_at": pub_date,
+                        "description": f"Позиция {title} в компании {employer}",
                         "status": "NEW",
                         "match_score": None,
                         "cover_letter": "",
@@ -265,6 +288,22 @@ class HHClient:
                 logger.error(f"Ошибка при веб-поиске: {e}")
                 break
 
+        # Параллельная дозагрузка полных описаний и навыков для найденных вакансий
+        if fetch_full_description and results:
+            logger.info(f"Загрузка полных описаний для {len(results)} вакансий...")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                future_to_id = {executor.submit(self.fetch_vacancy_full_details, r["id"]): r for r in results}
+                for future in concurrent.futures.as_completed(future_to_id):
+                    rec = future_to_id[future]
+                    try:
+                        desc, skills = future.result()
+                        if desc:
+                            rec["description"] = desc
+                        if skills:
+                            rec["skills"] = ", ".join(skills)
+                    except Exception as err:
+                        logger.debug(f"Ошибка загрузки деталей для {rec['id']}: {err}")
+
         return results
 
     def fetch_and_normalize_vacancies(
@@ -277,9 +316,9 @@ class HHClient:
         fetch_full_description: bool = True,
     ) -> List[Dict[str, Any]]:
         """
-        Основной метод сбора: сначала пробует официальный API,
-        при 403 (отсутствии ключа) мягко переключается на веб-сбор.
+        Основной метод сбора вакансий.
         """
+        # Сначала пробуем официальный API
         try:
             url = f"{self.base_url}/vacancies"
             params = {
@@ -329,11 +368,12 @@ class HHClient:
         except Exception as e:
             logger.warning(f"Официальный API недоступен, переключаемся на Web-режим: {e}")
 
-        # Fallback на Web-сбор
+        # Fallback на Web-сбор с загрузкой полного описания
         return self.fetch_via_web(
             text=text,
             area=area,
             experience=experience,
             only_with_salary=only_with_salary,
             max_vacancies=max_vacancies,
+            fetch_full_description=fetch_full_description,
         )

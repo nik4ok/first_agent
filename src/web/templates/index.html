@@ -39,23 +39,41 @@
             </div>
             
             <div class="flex items-center space-x-3">
+                <!-- User Profile Badge -->
+                <div id="navbar-user-badge" class="hidden md:flex items-center space-x-2 bg-slate-100/90 px-3 py-1.5 rounded-xl border border-slate-200 text-xs">
+                    <i class="fa-solid fa-circle-user text-blue-600 text-sm"></i>
+                    <span id="navbar-user-name" class="font-bold text-slate-800">Загрузка...</span>
+                </div>
+
                 <!-- Resume Selector from HH -->
-                <div class="hidden lg:flex items-center space-x-2 bg-slate-100/90 px-3 py-1.5 rounded-xl border border-slate-200 text-xs">
+                <div class="flex items-center space-x-1.5 bg-slate-100/90 px-3 py-1.5 rounded-xl border border-slate-200 text-xs">
                     <i class="fa-solid fa-id-card text-slate-500"></i>
-                    <span class="text-slate-500 font-medium">Активное резюме на HH:</span>
-                    <select id="navbar-resume-select" onchange="onSelectResume(this.value)" class="bg-transparent font-bold text-slate-800 focus:outline-none cursor-pointer max-w-[220px] truncate">
-                        <option value="">Загрузка резюме...</option>
+                    <span class="text-slate-500 font-medium hidden sm:inline">Резюме:</span>
+                    <select id="navbar-resume-select" onchange="onSelectResume(this.value)" class="bg-transparent font-bold text-slate-800 focus:outline-none cursor-pointer max-w-[160px] sm:max-w-[210px] truncate">
+                        <option value="">(Загрузка...)</option>
                     </select>
+                    <button onclick="openSetResumeModal()" class="text-blue-600 hover:text-blue-800 ml-1 p-0.5" title="Ввести ID или ссылку на резюме вручную">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                    </button>
                 </div>
 
                 <a href="/api/download-excel" class="inline-flex items-center px-3 py-1.5 text-xs font-bold rounded-xl text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition shadow-2xs">
                     <i class="fa-solid fa-file-excel mr-1.5 text-emerald-600"></i> Скачать Excel
                 </a>
                 
-                <span id="auth-status-badge" class="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    <span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
-                    HH Ready
-                </span>
+                <button onclick="openBrowserLoginModal()" id="browser-status-btn" class="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition shadow-2xs cursor-pointer" title="Нажмите для привязки браузерной сессии автооткликов">
+                    <span id="browser-status-badge" class="flex items-center">
+                        <span id="browser-status-dot" class="w-2 h-2 mr-1.5 bg-amber-500 rounded-full"></span>
+                        <span id="browser-status-text">Вход в браузере</span>
+                    </span>
+                </button>
+
+                <button onclick="openAuthModal()" id="auth-status-btn" class="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition shadow-2xs cursor-pointer">
+                    <span id="auth-status-badge" class="flex items-center">
+                        <span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                        HH Ready
+                    </span>
+                </button>
             </div>
         </div>
     </header>
@@ -139,9 +157,10 @@
                 </div>
 
                 <div class="flex items-center flex-wrap gap-2">
-                    <button onclick="syncResumeFromHH()" id="btn-sync-hh-resume" class="px-3.5 py-2 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/30 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 shadow-2xs">
-                        <i class="fa-solid fa-cloud-arrow-down text-emerald-400"></i>
-                        <span>Импортировать с HeadHunter</span>
+                    <input type="file" id="resume-file-input" accept=".pdf,.docx,.txt" class="hidden" onchange="uploadResumeFile(event)">
+                    <button onclick="document.getElementById('resume-file-input').click()" id="btn-upload-file" class="px-3.5 py-2 bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 border border-blue-500/30 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 shadow-2xs" title="Загрузить резюме в формате PDF, Word или TXT">
+                        <i class="fa-solid fa-file-arrow-up text-blue-400"></i>
+                        <span>Загрузить файл (PDF/DOCX)</span>
                     </button>
                     <button onclick="openResumeEditModal()" class="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white border border-white/15 text-xs font-bold rounded-xl transition flex items-center space-x-1.5">
                         <i class="fa-solid fa-pen-to-square"></i>
@@ -252,12 +271,17 @@
                     </button>
                 </div>
 
-                <!-- AI Run and Status Filter -->
+                <!-- AI Run, Autopilot and Status Filter -->
                 <div class="flex items-center space-x-2 self-end sm:self-auto">
+                    <button onclick="openAutopilotModal()" id="btn-autopilot-open" class="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold rounded-xl transition flex items-center space-x-1.5 shadow-xs" title="Автоматическая отправка 50 самых релевантных откликов">
+                        <i class="fa-solid fa-paper-plane text-emerald-300"></i>
+                        <span>🚀 Автопилот (Топ-отклики)</span>
+                    </button>
                     <button onclick="triggerAnalyze()" id="btn-analyze" class="px-3.5 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 shadow-2xs">
                         <i class="fa-solid fa-wand-magic-sparkles text-indigo-600"></i>
-                        <span>AI Анализ новых</span>
+                        <span>AI Анализ</span>
                     </button>
+                    <!-- AI Run, Autopilot, Status Filter and Sorting -->
                     <select id="filter-status" onchange="renderTable()" class="px-3 py-1.5 text-xs font-bold border border-slate-300 rounded-xl bg-slate-50 focus:outline-none cursor-pointer">
                         <option value="ALL">Все статусы</option>
                         <option value="NEW">🆕 Только новые (NEW)</option>
@@ -265,6 +289,14 @@
                         <option value="APPLIED">🚀 Отправлен отклик (APPLIED)</option>
                         <option value="INVITED">🎉 Приглашения (INVITED)</option>
                         <option value="SKIPPED">🚫 Пропущенные (SKIPPED)</option>
+                    </select>
+
+                    <select id="sort-order" onchange="renderTable()" class="px-3 py-1.5 text-xs font-bold border border-blue-300 bg-blue-50/50 text-blue-950 rounded-xl focus:outline-none cursor-pointer" title="Сортировка списка вакансий">
+                        <option value="newest" selected>🕒 Сначала свежие</option>
+                        <option value="score_desc">🎯 По соответствию (Match Score)</option>
+                        <option value="salary_desc">💰 По зарплате (Сначала высокая)</option>
+                        <option value="company_asc">🏢 По компании (А–Я)</option>
+                        <option value="oldest">⏳ Сначала более ранние</option>
                     </select>
                 </div>
             </div>
@@ -291,6 +323,76 @@
         </div>
 
     </main>
+
+    <!-- Modal for Autopilot Multi-Application -->
+    <div id="modal-autopilot" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-150">
+            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-rocket text-indigo-600 text-lg"></i>
+                    <div>
+                        <h3 class="font-bold text-slate-900">Автопилот откликов HeadHunter</h3>
+                        <p class="text-[11px] text-slate-500">Автоматическая отправка откликов на лучшие вакансии</p>
+                    </div>
+                </div>
+                <button onclick="closeAutopilotModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            
+            <div class="p-6 space-y-4 text-xs text-slate-600">
+                <div class="p-3.5 bg-indigo-50 border border-indigo-200 rounded-xl space-y-1.5 text-slate-700">
+                    <p class="font-bold text-indigo-900 flex items-center gap-1.5">
+                        <i class="fa-solid fa-shield-halved text-indigo-600"></i> Как работает безопасный автопилот:
+                    </p>
+                    <ul class="list-disc list-inside space-y-1 leading-relaxed text-[11px]">
+                        <li>Берет самые релевантные вакансии из базы (отсортированные по Match Score %).</li>
+                        <li>Генерирует персональное сопроводительное письмо под стек работодателя.</li>
+                        <li>Делает безопасные интервалы (2 сек) между запросами для защиты от блокировок HH.</li>
+                    </ul>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block font-bold text-slate-700 mb-1 uppercase tracking-wider text-[11px]">Количество откликов:</label>
+                        <select id="autopilot-count" class="w-full p-2.5 text-xs font-bold border border-slate-300 rounded-xl bg-slate-50 focus:outline-none">
+                            <option value="10">10 вакансий</option>
+                            <option value="25">25 вакансий</option>
+                            <option value="50" selected>50 вакансий (Топ)</option>
+                            <option value="100">100 вакансий</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 mb-1 uppercase tracking-wider text-[11px]">Мин. порог Match Score:</label>
+                        <select id="autopilot-score" class="w-full p-2.5 text-xs font-bold border border-slate-300 rounded-xl bg-slate-50 focus:outline-none">
+                            <option value="70" selected>≥ 70% (Только сильный Match)</option>
+                            <option value="50">≥ 50% (Средний и высокий)</option>
+                            <option value="30">≥ 30% (Широкий охват)</option>
+                            <option value="0">Все найденные</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Progress / Result Box -->
+                <div id="autopilot-progress-box" class="hidden p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                    <div class="flex items-center justify-between font-bold text-slate-800">
+                        <span id="autopilot-status-text">Отправка откликов...</span>
+                        <i class="fa-solid fa-spinner fa-spin text-blue-600" id="autopilot-spinner"></i>
+                    </div>
+                    <div class="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                        <div id="autopilot-bar" class="bg-indigo-600 h-2 rounded-full transition-all duration-300" style="width: 10%;"></div>
+                    </div>
+                    <p id="autopilot-log" class="text-[11px] text-slate-500 font-mono"></p>
+                </div>
+            </div>
+
+            <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end space-x-3">
+                <button onclick="closeAutopilotModal()" class="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800">Отмена</button>
+                <button onclick="runAutopilot()" id="btn-start-autopilot" class="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center space-x-1.5">
+                    <i class="fa-solid fa-paper-plane"></i>
+                    <span>Запустить автоотклики</span>
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- Modal for Cover Letter Preview & Edit -->
     <div id="modal-letter" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
@@ -324,6 +426,133 @@
             <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end space-x-3">
                 <button onclick="closeModal()" class="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800">Отмена</button>
                 <button onclick="saveModalLetter()" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm">Сохранить письмо</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for HH OAuth Authorization -->
+    <div id="modal-auth" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-150">
+            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-key text-blue-600 text-lg"></i>
+                    <h3 class="font-bold text-slate-900">Авторизация в HeadHunter (OAuth 2.0)</h3>
+                </div>
+                <button onclick="closeAuthModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="p-6 space-y-4 text-xs text-slate-600">
+                <div class="p-3 bg-blue-50 border border-blue-200 rounded-xl space-y-2 text-slate-700">
+                    <p class="font-bold text-blue-900">Как пройти авторизацию в 2 шага:</p>
+                    <ol class="list-decimal list-inside space-y-1.5 leading-relaxed">
+                        <li>Нажмите кнопку ниже, чтобы открыть официальную страницу входа <b>hh.ru</b> и нажать <b>«Разрешить»</b>.</li>
+                        <li>После подтверждения вас перенаправит на адрес с кодом: <br><code class="bg-blue-100/80 px-1.5 py-0.5 rounded text-[11px] font-mono">https://hh.ru/?code=ВАШ_КОД</code>. Скопируйте этот код и вставьте в поле ниже.</li>
+                    </ol>
+                </div>
+
+                <div class="text-center pt-1">
+                    <a id="btn-open-hh-auth" href="#" target="_blank" class="inline-flex items-center px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-xs transition space-x-2">
+                        <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                        <span>1. Открыть страницу входа HH.ru</span>
+                    </a>
+                </div>
+
+                <div class="pt-2 border-t border-slate-100">
+                    <label class="block font-bold text-slate-700 mb-1.5 uppercase tracking-wider text-[11px]">2. Вставьте полученный код (параметр code):</label>
+                    <input type="text" id="auth-code-input" placeholder="Например: 12345ABCDE..." class="w-full p-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-slate-900">
+                </div>
+            </div>
+            <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end space-x-3">
+                <button onclick="closeAuthModal()" class="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800">Отмена</button>
+                <button onclick="submitAuthCode()" id="btn-submit-auth-code" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition">
+                    Подтвердить и подключить
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Playwright Browser Login -->
+    <div id="modal-browser-login" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-150">
+            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-window-restore text-indigo-600 text-lg"></i>
+                    <div>
+                        <h3 class="font-bold text-slate-900">Вход на HH.ru для автооткликов</h3>
+                        <p class="text-[11px] text-slate-500">Playwright эмуляция браузера (обход закрытого API HeadHunter)</p>
+                    </div>
+                </div>
+                <button onclick="closeBrowserLoginModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            
+            <div class="p-6 space-y-4 text-xs text-slate-600">
+                <div class="p-3.5 bg-indigo-50 border border-indigo-200 rounded-xl space-y-1.5 text-slate-700">
+                    <p class="font-bold text-indigo-900 flex items-center gap-1.5">
+                        <i class="fa-solid fa-circle-info text-indigo-600"></i> Почему необходим вход в браузере:
+                    </p>
+                    <p class="text-[11px] leading-relaxed">
+                        HeadHunter отключил отправку откликов соискателей через публичный API (ошибка 403 Forbidden). 
+                        Чтобы бот мог <strong>автоматически откликаться</strong> и отправлять письма на автопилоте, он использует защищенный браузер с вашей сохраненной сессией.
+                    </p>
+                </div>
+
+                <div class="space-y-3">
+                    <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                        <p class="font-bold text-slate-800 flex items-center gap-1.5">
+                            <span>1️⃣ Шаг: Открыть окно браузера</span>
+                        </p>
+                        <p class="text-[11px] text-slate-500">Нажмите кнопку ниже. Откроется окно браузера Chrome. Войдите в свой аккаунт HeadHunter (по СМС, почте, паролю или Госуслугам/Сбер ID).</p>
+                        <button onclick="startBrowserLogin()" id="btn-browser-open" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition flex items-center justify-center gap-1.5 shadow-xs">
+                            <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                            <span>Открыть окно входа на HH.ru</span>
+                        </button>
+                    </div>
+
+                    <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                        <p class="font-bold text-slate-800 flex items-center gap-1.5">
+                            <span>2️⃣ Шаг: Сохранить сессию</span>
+                        </p>
+                        <p class="text-[11px] text-slate-500">После того как вы вошли в свой профиль на сайте hh.ru, нажмите «Сохранить сессию». Браузер закроется, а сессия сохранится навсегда.</p>
+                        <button onclick="saveBrowserLogin()" id="btn-browser-save" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition flex items-center justify-center gap-1.5 shadow-xs">
+                            <i class="fa-solid fa-floppy-disk"></i>
+                            <span>Сохранить сессию для автооткликов</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="browser-status-alert" class="hidden p-2.5 rounded-lg text-center font-bold text-[11px]"></div>
+            </div>
+
+            <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end">
+                <button onclick="closeBrowserLoginModal()" class="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Setting Resume ID / URL -->
+    <div id="modal-set-resume" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-150">
+            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-id-card text-blue-600 text-lg"></i>
+                    <h3 class="font-bold text-slate-900">Выбор резюме для откликов</h3>
+                </div>
+                <button onclick="closeSetResumeModal()" class="text-slate-400 hover:text-slate-600 text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="p-6 space-y-4 text-xs text-slate-600">
+                <div class="p-3 bg-blue-50 border border-blue-200 rounded-xl space-y-1.5 text-slate-700">
+                    <p class="font-bold text-blue-900">Как привязать резюме:</p>
+                    <p class="leading-relaxed">Откройте ваше резюме на <b>hh.ru</b>, скопируйте ссылку из адресной строки браузера (например, <code class="bg-blue-100 px-1 py-0.5 rounded font-mono text-[11px]">https://hh.ru/resume/0123456789abcdef</code>) или его ID и вставьте в поле ниже.</p>
+                </div>
+                <div>
+                    <label class="block font-bold text-slate-700 mb-1.5 uppercase tracking-wider text-[11px]">Ссылка или ID резюме:</label>
+                    <input type="text" id="manual-resume-input" placeholder="https://hh.ru/resume/0123456789abcdef..." class="w-full p-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-slate-900">
+                </div>
+            </div>
+            <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end space-x-3">
+                <button onclick="closeSetResumeModal()" class="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800">Отмена</button>
+                <button onclick="saveManualResume()" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition">
+                    Сохранить резюме
+                </button>
             </div>
         </div>
     </div>
@@ -364,6 +593,7 @@
 
         async function initPage() {
             await loadConfig();
+            await checkBrowserStatus();
             await loadResumeSummary();
             await loadResumes();
             await loadVacancies();
@@ -376,6 +606,90 @@
                         triggerSearch();
                     }
                 });
+            }
+        }
+
+        async function checkBrowserStatus() {
+            try {
+                const res = await fetch('/api/browser-status');
+                const data = await res.json();
+                const dot = document.getElementById('browser-status-dot');
+                const text = document.getElementById('browser-status-text');
+                const btn = document.getElementById('browser-status-btn');
+
+                if (data.is_logged_in) {
+                    dot.className = 'w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse';
+                    text.innerText = 'Браузер готов';
+                    btn.className = 'inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition shadow-2xs cursor-pointer';
+                } else {
+                    dot.className = 'w-2 h-2 mr-1.5 bg-amber-500 rounded-full';
+                    text.innerText = 'Вход в браузере';
+                    btn.className = 'inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 transition shadow-2xs cursor-pointer';
+                }
+            } catch (e) {
+                console.error("Ошибка проверки статуса браузера:", e);
+            }
+        }
+
+        function openBrowserLoginModal() {
+            const alertBox = document.getElementById('browser-status-alert');
+            alertBox.classList.add('hidden');
+            document.getElementById('modal-browser-login').classList.remove('hidden');
+        }
+
+        function closeBrowserLoginModal() {
+            document.getElementById('modal-browser-login').classList.add('hidden');
+        }
+
+        async function startBrowserLogin() {
+            const btn = document.getElementById('btn-browser-open');
+            const alertBox = document.getElementById('browser-status-alert');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Запуск браузера Chromium...</span>`;
+
+            try {
+                const res = await fetch('/api/browser-login-open', { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    alertBox.className = "p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs font-medium space-y-1";
+                    alertBox.innerHTML = `
+                        <p class="font-bold">🌐 Окно браузера открыто на вашем экране!</p>
+                        <p>Войдите в аккаунт HeadHunter, затем нажмите кнопку «2. Сохранить сессию» ниже.</p>
+                    `;
+                    alertBox.classList.remove('hidden');
+                    showToast("Окно браузера открыто! Выполните вход на HH.ru");
+                } else {
+                    showToast(data.detail || "Ошибка запуска браузера", true);
+                }
+            } catch (e) {
+                showToast("Ошибка подключения к серверу браузера", true);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fa-solid fa-arrow-up-right-from-square"></i> <span>Открыть окно входа на HH.ru</span>`;
+            }
+        }
+
+        async function saveBrowserLogin() {
+            const btn = document.getElementById('btn-browser-save');
+            const alertBox = document.getElementById('browser-status-alert');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Сохранение сессии...</span>`;
+
+            try {
+                const res = await fetch('/api/browser-login-save', { method: 'POST' });
+                const data = await res.json();
+                if (res.ok && data.status === 'ok') {
+                    showToast("🎉 Сессия браузера успешно сохранена! Автоотклики активны.");
+                    await checkBrowserStatus();
+                    closeBrowserLoginModal();
+                } else {
+                    showToast(data.detail || "Не удалось сохранить сессию", true);
+                }
+            } catch (e) {
+                showToast("Ошибка сохранения сессии браузера", true);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> <span>Сохранить сессию для автооткликов</span>`;
             }
         }
 
@@ -407,12 +721,19 @@
                 }
 
                 const badge = document.getElementById('auth-status-badge');
-                if (data.is_authorized) {
+                const userBadge = document.getElementById('navbar-user-badge');
+                const userName = document.getElementById('navbar-user-name');
+
+                if (data.is_authorized && data.user_info) {
                     badge.innerHTML = `<span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> HH Ready`;
-                    badge.className = "inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200";
+                    userBadge.classList.remove('hidden');
+                    userName.innerText = `${data.user_info.full_name} (${data.user_info.resumes_count} резюме)`;
+                } else if (data.is_authorized) {
+                    badge.innerHTML = `<span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> HH Ready`;
+                    userBadge.classList.add('hidden');
                 } else {
                     badge.innerHTML = `<span class="w-2 h-2 mr-1.5 bg-amber-500 rounded-full"></span> Без OAuth`;
-                    badge.className = "inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200";
+                    userBadge.classList.add('hidden');
                 }
             } catch (e) {
                 console.error(e);
@@ -425,7 +746,14 @@
                 const data = await res.json();
                 if (data.status === 'ok' && data.summary) {
                     resumeSummaryData = data.summary;
-                    document.getElementById('resume-card-title').innerText = data.summary.title || 'Мое резюме';
+                    
+                    const titleEl = document.getElementById('resume-card-title');
+                    if (data.user_info && data.user_info.full_name) {
+                        titleEl.innerText = `${data.user_info.full_name} — ${data.summary.title || 'Специалист'}`;
+                    } else {
+                        titleEl.innerText = data.summary.title || 'Мое резюме';
+                    }
+
                     document.getElementById('resume-card-preview').innerText = data.summary.preview || 'Описание резюме не заполнено.';
                     document.getElementById('resume-skills-count').innerText = `${data.summary.skills_count} навыков выделено`;
 
@@ -450,17 +778,53 @@
                 const res = await fetch('/api/my-resumes');
                 const data = await res.json();
                 const sel = document.getElementById('navbar-resume-select');
-                if (data.status === 'ok' && data.items && data.items.length > 0) {
+                if (data.items && data.items.length > 0) {
                     sel.innerHTML = data.items.map(r => `
                         <option value="${r.id}" ${r.id === data.active_resume_id ? 'selected' : ''}>
                             ${r.title} (${r.id.substring(0, 8)}...)
                         </option>
                     `).join('');
+                } else if (data.active_resume_id) {
+                    sel.innerHTML = `<option value="${data.active_resume_id}" selected>ID: ${data.active_resume_id.substring(0, 10)}...</option>`;
                 } else {
-                    sel.innerHTML = `<option value="">(Авторизуйтесь в HH для списка)</option>`;
+                    sel.innerHTML = `<option value="">(Укажите резюме ✏️)</option>`;
                 }
             } catch (e) {
                 console.error(e);
+            }
+        }
+
+        function openSetResumeModal() {
+            document.getElementById('modal-set-resume').classList.remove('hidden');
+        }
+
+        function closeSetResumeModal() {
+            document.getElementById('modal-set-resume').classList.add('hidden');
+        }
+
+        async function saveManualResume() {
+            const inputVal = document.getElementById('manual-resume-input').value.trim();
+            if (!inputVal) {
+                showToast("Пожалуйста, вставьте ссылку или ID резюме", true);
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/select-resume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ resume_id: inputVal })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'ok') {
+                    showToast(`✅ Резюме (ID: ${data.selected_id}) сохранено!`);
+                    closeSetResumeModal();
+                    await loadResumes();
+                } else {
+                    showToast("Не удалось сохранить резюме", true);
+                }
+            } catch (e) {
+                showToast("Ошибка при сохранении резюме", true);
             }
         }
 
@@ -503,6 +867,26 @@
             document.getElementById('vacancies-count-badge').innerText = total;
         }
 
+        function formatPublishDate(dateStr) {
+            if (!dateStr || dateStr === 'None' || dateStr === 'null') return 'Свежая';
+            try {
+                // Если формат ISO (2026-08-24T12:00:00) или дата (2026-08-24 12:00)
+                const d = new Date(dateStr.replace(' ', 'T'));
+                if (isNaN(d.getTime())) return dateStr;
+                
+                const now = new Date();
+                const isToday = d.toDateString() === now.toDateString();
+                const timePart = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+                if (isToday) {
+                    return `Сегодня в ${timePart}`;
+                }
+                const datePart = d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+                return `${datePart}, ${timePart}`;
+            } catch (e) {
+                return dateStr;
+            }
+        }
+
         function parseMatchNotes(notes) {
             if (!notes) return { pros: '', cons: '', matchSkills: [], missingSkills: [] };
             
@@ -532,11 +916,35 @@
 
         function renderTable() {
             const filter = document.getElementById('filter-status').value;
+            const sortOrder = document.getElementById('sort-order') ? document.getElementById('sort-order').value : 'newest';
             const container = document.getElementById('vacancies-container');
 
-            let filtered = vacanciesData;
+            let filtered = [...vacanciesData];
             if (filter !== 'ALL') {
-                filtered = vacanciesData.filter(v => v.status === filter);
+                filtered = filtered.filter(v => v.status === filter);
+            }
+
+            // Применение выбранной сортировки
+            if (sortOrder === 'score_desc') {
+                filtered.sort((a, b) => (parseInt(b.match_score) || 0) - (parseInt(a.match_score) || 0));
+            } else if (sortOrder === 'salary_desc') {
+                filtered.sort((a, b) => {
+                    const salA = parseInt(a.salary_from || a.salary_to || 0) || 0;
+                    const salB = parseInt(b.salary_from || b.salary_to || 0) || 0;
+                    return salB - salA;
+                });
+            } else if (sortOrder === 'company_asc') {
+                filtered.sort((a, b) => (a.employer || '').localeCompare(b.employer || ''));
+            } else if (sortOrder === 'oldest') {
+                filtered.sort((a, b) => (a.published_at || '').localeCompare(b.published_at || ''));
+            } else {
+                // newest (по умолчанию - сначала самые свежие)
+                filtered.sort((a, b) => {
+                    if (a.published_at && b.published_at) {
+                        return b.published_at.localeCompare(a.published_at);
+                    }
+                    return 0;
+                });
             }
 
             if (filtered.length === 0) {
@@ -580,6 +988,7 @@
 
                 const notesInfo = parseMatchNotes(v.notes);
                 const descSnippet = (v.description || 'Описание не указано.').substring(0, 320);
+                const pubDateFormatted = formatPublishDate(v.published_at);
 
                 return `
                     <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-2xs hover:shadow-sm transition space-y-4">
@@ -606,6 +1015,12 @@
                                     <span class="flex items-center gap-1">
                                         <i class="fa-solid fa-location-dot text-slate-400"></i> ${v.city || 'Город не указан'}
                                     </span>
+                                    ${v.published_at ? `
+                                        <span>•</span>
+                                        <span class="text-slate-500 font-medium flex items-center gap-1" title="Дата публикации/обнаружения">
+                                            <i class="fa-regular fa-clock text-blue-500"></i> ${pubDateFormatted}
+                                        </span>
+                                    ` : ''}
                                 </div>
                             </div>
 
@@ -674,15 +1089,20 @@
                             </div>
 
                             <!-- Action Buttons -->
-                            <div class="flex items-center space-x-2 self-end sm:self-auto">
+                            <div class="flex items-center flex-wrap gap-2 self-end sm:self-auto">
+                                <button onclick="openAndCopyVacancy('${v.id}', '${v.url}')" class="px-3 py-2 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 hover:border-blue-300 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 shadow-2xs" title="Открыть страницу вакансии на hh.ru и скопировать готовое письмо">
+                                    <i class="fa-solid fa-arrow-up-right-from-square text-blue-600"></i>
+                                    <span>Открыть на HH</span>
+                                </button>
+
                                 ${v.status !== 'APPLIED' ? `
-                                    <button onclick="applyVacancy('${v.id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center space-x-1.5" title="Откликнуться на HH.ru">
+                                    <button onclick="applyVacancy('${v.id}')" id="btn-apply-${v.id}" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center space-x-1.5" title="Автоматический отклик через браузерный движок">
                                         <i class="fa-solid fa-paper-plane"></i>
                                         <span>Откликнуться</span>
                                     </button>
                                 ` : `
-                                    <span class="px-3 py-1.5 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-xl border border-indigo-200">
-                                        <i class="fa-solid fa-check mr-1"></i> Отклик отправлен
+                                    <span class="px-3 py-2 bg-emerald-50 text-emerald-800 text-xs font-bold rounded-xl border border-emerald-200 flex items-center gap-1">
+                                        <i class="fa-solid fa-circle-check text-emerald-600"></i> Отклик отправлен
                                     </span>
                                 `}
 
@@ -756,19 +1176,51 @@
             }
         }
 
+        async function openAndCopyVacancy(id, url) {
+            const item = vacanciesData.find(v => v.id == id);
+            let letterCopied = false;
+            if (item && item.cover_letter) {
+                try {
+                    await navigator.clipboard.writeText(item.cover_letter);
+                    letterCopied = true;
+                } catch (e) {
+                    console.warn("Не удалось скопировать в буфер:", e);
+                }
+            }
+            if (letterCopied) {
+                showToast("📋 Письмо скопировано в буфер обмена! Открываю вакансию на HH.ru...");
+            } else {
+                showToast("🌐 Открываю вакансию на HeadHunter...");
+            }
+            window.open(url, '_blank');
+        }
+
         async function applyVacancy(id) {
-            if (!confirm(`Отправить отклик на вакансию #${id}?`)) return;
+            const btn = document.getElementById(`btn-apply-${id}`);
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Отклик...</span>`;
+            }
+
             try {
                 const res = await fetch(`/api/apply/${id}`, { method: 'POST' });
                 const data = await res.json();
                 if (data.success) {
-                    showToast(`✅ Отклик успешно отправлен на HH.ru!`);
+                    showToast(`🎉 Отклик успешно отправлен на HH.ru!`);
+                    await loadVacancies();
+                } else if (data.error === 'browser_auth_needed') {
+                    showToast(`🔐 Требуется вход в браузере для автоотклика`, true);
+                    openBrowserLoginModal();
                 } else {
-                    showToast(`❌ ${data.message}`, true);
+                    showToast(`❌ ${data.message || 'Ошибка отправки отклика'}`, true);
                 }
-                await loadVacancies();
             } catch (err) {
                 showToast("Ошибка при отправке отклика", true);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = `<i class="fa-solid fa-paper-plane"></i> <span>Откликнуться</span>`;
+                }
             }
         }
 
@@ -805,23 +1257,79 @@
             currentEditingId = null;
         }
 
+        async function openAuthModal() {
+            try {
+                const res = await fetch('/api/auth/url');
+                const data = await res.json();
+                if (data.url) {
+                    document.getElementById('btn-open-hh-auth').href = data.url;
+                }
+            } catch (e) {
+                console.error("Ошибка получения URL авторизации", e);
+            }
+            document.getElementById('auth-code-input').value = '';
+            document.getElementById('modal-auth').classList.remove('hidden');
+        }
+
+        function closeAuthModal() {
+            document.getElementById('modal-auth').classList.add('hidden');
+        }
+
+        async function submitAuthCode() {
+            const code = document.getElementById('auth-code-input').value.trim();
+            if (!code) {
+                showToast("Пожалуйста, вставьте код авторизации", true);
+                return;
+            }
+
+            const btn = document.getElementById('btn-submit-auth-code');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> Подключение...`;
+
+            try {
+                const res = await fetch('/api/auth/submit-code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code: code })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'ok') {
+                    showToast("🎉 Успешная авторизация в HeadHunter!");
+                    closeAuthModal();
+                    await loadConfig();
+                    await loadResumes();
+                    await syncResumeFromHH();
+                } else {
+                    showToast(data.detail || "Ошибка авторизации. Проверьте правильность кода.", true);
+                }
+            } catch (e) {
+                showToast("Ошибка при отправке кода", true);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `Подтвердить и подключить`;
+            }
+        }
+
         async function syncResumeFromHH() {
             const btn = document.getElementById('btn-sync-hh-resume');
             btn.disabled = true;
-            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin text-emerald-400"></i> <span>Импорт с HH...</span>`;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin text-emerald-400"></i> <span>Синхронизация...</span>`;
 
             try {
                 const res = await fetch('/api/sync-hh-resume', { method: 'POST' });
                 const data = await res.json();
-                if (res.ok && data.status === 'ok') {
+                if (data.status === 'ok') {
                     showToast("🎉 Текст резюме успешно импортирован из вашего профиля HeadHunter!");
                     await loadResumeSummary();
                     await loadResumes();
+                    await loadVacancies();
                 } else {
-                    showToast(data.detail || "Авторизуйтесь в HeadHunter для импорта резюме", true);
+                    showToast(data.message || "Открыт редактор резюме для вставки вашего текста");
+                    openResumeEditModal();
                 }
             } catch (err) {
-                showToast("Ошибка при импорте резюме с HeadHunter", true);
+                showToast("Открываем окно редактирования резюме");
+                openResumeEditModal();
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = `<i class="fa-solid fa-cloud-arrow-down text-emerald-400"></i> <span>Импортировать с HeadHunter</span>`;
@@ -854,12 +1362,106 @@
                 });
                 const data = await res.json();
                 if (data.status === 'ok') {
-                    showToast("✅ Резюме успешно сохранено!");
+                    showToast("✅ Резюме сохранено, скоринг всех вакансий пересчитан!");
                     closeResumeModal();
                     await loadResumeSummary();
+                    await loadVacancies();
                 }
             } catch (e) {
                 showToast("Ошибка при сохранении резюме", true);
+            }
+        }
+
+        async function uploadResumeFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const btn = document.getElementById('btn-upload-file');
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin text-blue-400"></i> <span>Чтение файла...</span>`;
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/upload-resume-file', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'ok') {
+                    showToast(`🎉 Резюме из файла «${file.name}» успешно загружено и проанализировано!`);
+                    await loadResumeSummary();
+                    await loadVacancies();
+                } else {
+                    showToast(data.detail || "Не удалось прочитать файл резюме", true);
+                }
+            } catch (err) {
+                showToast("Ошибка при загрузке файла резюме", true);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fa-solid fa-file-arrow-up text-blue-400"></i> <span>Загрузить файл (PDF/DOCX)</span>`;
+                event.target.value = '';
+            }
+        }
+
+        function openAutopilotModal() {
+            document.getElementById('autopilot-progress-box').classList.add('hidden');
+            document.getElementById('btn-start-autopilot').disabled = false;
+            document.getElementById('btn-start-autopilot').classList.remove('opacity-50');
+            document.getElementById('modal-autopilot').classList.remove('hidden');
+        }
+
+        function closeAutopilotModal() {
+            document.getElementById('modal-autopilot').classList.add('hidden');
+        }
+
+        async function runAutopilot() {
+            const count = parseInt(document.getElementById('autopilot-count').value) || 50;
+            const minScore = parseInt(document.getElementById('autopilot-score').value) || 70;
+
+            const btn = document.getElementById('btn-start-autopilot');
+            btn.disabled = true;
+            btn.classList.add('opacity-50');
+
+            const progBox = document.getElementById('autopilot-progress-box');
+            const statusText = document.getElementById('autopilot-status-text');
+            const progBar = document.getElementById('autopilot-bar');
+            const logText = document.getElementById('autopilot-log');
+
+            progBox.classList.remove('hidden');
+            statusText.innerText = `Автопилот запущен: отбираем до ${count} вакансий (Match ≥ ${minScore}%)...`;
+            progBar.style.width = '20%';
+            logText.innerText = 'Подготовка сопроводительных писем и безопасная отправка откликов...';
+
+            try {
+                const res = await fetch('/api/autopilot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        max_count: count,
+                        min_score: minScore,
+                        delay_seconds: 1.5
+                    })
+                });
+                const data = await res.json();
+                progBar.style.width = '100%';
+
+                if (data.status === 'ok') {
+                    statusText.innerText = `🎉 Завершено: отправлено ${data.applied_count} откликов!`;
+                    logText.innerText = `Успешно: ${data.applied_count} | Ошибок: ${data.failed_count}`;
+                    showToast(`🚀 Автопилот успешно отправил ${data.applied_count} откликов!`);
+                    await loadVacancies();
+                } else {
+                    statusText.innerText = `⚠️ ${data.message || 'Ошибка запуска автопилота'}`;
+                    showToast(data.message || "Ошибка автопилота", true);
+                }
+            } catch (err) {
+                statusText.innerText = '❌ Ошибка при выполнении автопилота';
+                showToast("Ошибка при выполнении автопилота", true);
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
             }
         }
 
