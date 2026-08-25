@@ -22,7 +22,7 @@ from aiogram.types import (
 
 from src.config import settings, update_env_variable
 from src.auth.hh_oauth import HHOAuthManager
-from src.parser import HHClient, ExcelStorage
+from src.parser import HHClient, ExcelStorage, AREA_LABELS, AREA_TOGGLE_CYCLE
 from src.analyzer import AIResumeAnalyzer
 from src.responder import HHResponder
 
@@ -80,7 +80,7 @@ def get_settings_inline_menu() -> InlineKeyboardMarkup:
     """Инлайн-меню настроек."""
     builder = InlineKeyboardBuilder()
     builder.button(text="✏️ Изменить поисковый запрос", callback_data="set_query_prompt")
-    builder.button(text="🌍 Регион (РФ / Москва / СПб)", callback_data="toggle_area")
+    builder.button(text="🌍 Регион (мир / РФ / город)", callback_data="toggle_area")
     builder.button(text="💼 Опыт работы", callback_data="toggle_exp")
     builder.button(text="⏰ Период публикации (свежесть)", callback_data="toggle_period")
     builder.button(text="💰 Только с зарплатой (Вкл/Выкл)", callback_data="toggle_salary")
@@ -138,8 +138,7 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
         current_resume = settings.HH_RESUME_ID or "⚠️ Не выбрано"
         current_search = settings.SEARCH_TEXT or "🔍 Любой запрос"
         
-        area_names = {"113": "Вся Россия", "1": "Москва", "2": "Санкт-Петербург"}
-        area_str = area_names.get(str(settings.SEARCH_AREA), f"Код {settings.SEARCH_AREA}")
+        area_str = AREA_LABELS.get(str(settings.SEARCH_AREA), f"Код {settings.SEARCH_AREA}")
 
         return (
             "🤖 **AI Job Agent — Интеллектуальный помощник HH.ru**\n\n"
@@ -370,8 +369,7 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
     @dp.message(Command("settings"))
     @dp.message(F.text == "⚙️ Настройки")
     async def cmd_settings(message: types.Message):
-        area_names = {"113": "Вся Россия (113)", "1": "Москва (1)", "2": "Санкт-Петербург (2)"}
-        area_str = area_names.get(str(settings.SEARCH_AREA), f"Код {settings.SEARCH_AREA}")
+        area_str = AREA_LABELS.get(str(settings.SEARCH_AREA), f"Код {settings.SEARCH_AREA}")
         
         period_names = {
             "1": "⚡ За 24 часа (1 день)",
@@ -748,13 +746,13 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
 
     @dp.callback_query(F.data == "toggle_area")
     async def cb_toggle_area(callback: types.CallbackQuery):
-        areas = ["113", "1", "2"]
+        areas = AREA_TOGGLE_CYCLE
         current = str(settings.SEARCH_AREA)
         next_idx = (areas.index(current) + 1) % len(areas) if current in areas else 0
         new_area = areas[next_idx]
         update_env_variable("SEARCH_AREA", new_area)
         settings.SEARCH_AREA = new_area
-        await callback.answer("Регион изменен!")
+        await callback.answer(f"Регион: {AREA_LABELS.get(new_area, new_area)}")
         await cmd_settings(callback.message)
 
     @dp.callback_query(F.data == "toggle_exp")

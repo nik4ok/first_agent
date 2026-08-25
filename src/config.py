@@ -25,7 +25,7 @@ class Settings:
 
     # Search defaults (по умолчанию пустая или базовая, настраивается динамически)
     SEARCH_TEXT: str = os.getenv("SEARCH_TEXT", "")
-    SEARCH_AREA: str = os.getenv("SEARCH_AREA", "113")  # 113 = Россия, 1 = Москва
+    SEARCH_AREA: str = os.getenv("SEARCH_AREA", "113")  # 113=РФ, 1=Москва, all=весь мир, ex_ru=мир без РФ
     SEARCH_EXPERIENCE: str = os.getenv("SEARCH_EXPERIENCE", "between1And3")
     SEARCH_PERIOD: str = os.getenv("SEARCH_PERIOD", "30")  # дни: 1, 3, 7, 14, 30, 60, 90, 365, all
     SEARCH_ONLY_WITH_SALARY: bool = os.getenv("SEARCH_ONLY_WITH_SALARY", "false").lower() == "true"

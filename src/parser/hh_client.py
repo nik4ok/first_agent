@@ -10,6 +10,30 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Специальные значения SEARCH_AREA (не числовые id hh.ru)
+WORLDWIDE_AREA_KEYS = {"all", "world", "worldwide"}
+EXCEPT_RU_AREA_KEYS = {"ex_ru", "world_except_ru", "except_ru", "no_ru"}
+RUSSIA_AREA_ID = "113"
+
+# Fallback, если /areas недоступен: страны HH + «Другие регионы» (ЕС, Кипр, remote)
+FALLBACK_COUNTRY_IDS = ["113", "5", "40", "9", "16", "28", "1001", "48", "97"]
+
+AREA_LABELS = {
+    "all": "🌐 Весь мир",
+    "ex_ru": "🌍 Весь мир кроме России",
+    "113": "🇷🇺 Вся Россия",
+    "1": "🏙️ Москва",
+    "2": "🏛️ Санкт-Петербург",
+    "3": "🏢 Екатеринбург",
+    "88": "🕌 Казань",
+    "4": "🌲 Новосибирск",
+    "66": "🏭 Нижний Новгород",
+    "53": "🌴 Краснодар",
+}
+
+# Цикл переключения региона в Telegram
+AREA_TOGGLE_CYCLE = ["all", "ex_ru", "113", "1", "2"]
+
 
 class HHClient:
     """
@@ -28,6 +52,7 @@ class HHClient:
         self.base_url = settings.HH_API_URL
         self.access_token = access_token or settings.HH_ACCESS_TOKEN
         self.user_agent = user_agent or settings.HH_USER_AGENT
+        self._country_ids: Optional[List[str]] = None
 
     @property
     def api_headers(self) -> Dict[str, str]:
@@ -49,6 +74,51 @@ class HHClient:
         text = soup.get_text(separator="\n")
         text = re.sub(r"\n\s*\n", "\n\n", text)
         return text.strip()
+
+    def get_country_ids(self, exclude_russia: bool = False) -> List[str]:
+        """Страны верхнего уровня hh.ru (Россия, СНГ, «Другие регионы» = 1001)."""
+        if self._country_ids is None:
+            try:
+                resp = requests.get(f"{self.base_url}/areas", headers=self.api_headers, timeout=10)
+                if resp.status_code == 200:
+                    ids = [str(c.get("id")) for c in resp.json() if c.get("id") is not None]
+                    if ids:
+                        self._country_ids = ids
+            except Exception as e:
+                logger.warning(f"Не удалось загрузить справочник стран HH: {e}")
+            if not self._country_ids:
+                self._country_ids = list(FALLBACK_COUNTRY_IDS)
+
+        ids = list(self._country_ids)
+        if exclude_russia:
+            return [i for i in ids if i != RUSSIA_AREA_ID]
+        return ids
+
+    def resolve_area_ids(self, area: Optional[str]) -> List[str]:
+        """
+        Преобразует значение фильтра региона в список area id для HH.
+        all / world  → все страны HH (включая Россию и «Другие регионы»)
+        ex_ru        → все страны кроме России (СНГ + ЕС/Кипр/remote через 1001)
+        113, 1, 2…   → один регион как раньше
+        """
+        raw = str(area or "").strip()
+        key = raw.lower()
+        if key in WORLDWIDE_AREA_KEYS:
+            return self.get_country_ids(exclude_russia=False)
+        if key in EXCEPT_RU_AREA_KEYS:
+            return self.get_country_ids(exclude_russia=True)
+        if not raw or key == "0":
+            return [RUSSIA_AREA_ID]
+        return [raw]
+
+    def _apply_area_params(self, params: Dict[str, Any], area: Optional[str]) -> Dict[str, Any]:
+        area_ids = self.resolve_area_ids(area)
+        if not area_ids:
+            return params
+        params["area"] = area_ids[0] if len(area_ids) == 1 else area_ids
+        if len(area_ids) > 1:
+            logger.info("Поиск HH по регионам %s → %s стран/зон", area, ",".join(area_ids))
+        return params
 
     @staticmethod
     def parse_salary_dict(salary_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -181,8 +251,7 @@ class HHClient:
                 "items_on_page": min(max_vacancies - len(results) + 5, 50),
                 "order_by": order_val,
             }
-            if area and str(area).strip() not in {"", "all", "0"}:
-                params["area"] = str(area).strip()
+            self._apply_area_params(params, area)
             if experience and experience in exp_map and experience != "all":
                 params["experience"] = exp_map[experience]
             if search_period and str(search_period).strip() not in {"all", "0", ""}:
@@ -341,13 +410,13 @@ class HHClient:
 
             while len(results) < max_vacancies and api_page < max_api_pages:
                 per_page_count = min(max_vacancies - len(results), 50)
-                params = {
+                params: Dict[str, Any] = {
                     "text": text,
-                    "area": area or "113",
                     "per_page": max(per_page_count, 10),
                     "page": api_page,
                     "order_by": "publication_time" if order_by == "publication_time" else "relevance",
                 }
+                self._apply_area_params(params, area)
                 if experience and experience not in {"all", ""}:
                     params["experience"] = experience
                 if search_period and str(search_period).strip() not in {"all", "0", ""}:

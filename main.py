@@ -201,7 +201,7 @@ def main():
     p_parse = subparsers.add_parser("parse", help="Собрать новые вакансии с HH.ru в Excel")
     p_parse.add_argument("--query", "-q", default=settings.SEARCH_TEXT, help="Поисковый запрос")
     p_parse.add_argument("--count", "-c", type=int, default=10, help="Количество вакансий")
-    p_parse.add_argument("--area", "-a", default=settings.SEARCH_AREA, help="Регион (113 - РФ)")
+    p_parse.add_argument("--area", "-a", default=settings.SEARCH_AREA, help="Регион: all / ex_ru / 113 (РФ) / 1 (Москва)")
     p_parse.add_argument("--experience", "-e", default=settings.SEARCH_EXPERIENCE, help="Опыт")
 
     # analyze
