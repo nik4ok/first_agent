@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import requests
+import re
 
 from src.config import settings
 
@@ -253,6 +254,14 @@ class HHOAuthManager:
         return "\n\n".join(parts)
 
 
+def parse_hh_resume_id(raw: str) -> str:
+    """Достаёт ID резюме из ссылки hh.ru/resume/... или возвращает уже чистый id."""
+    text = (raw or "").strip()
+    match = re.search(r"/resume/([a-zA-Z0-9]+)", text)
+    if match:
+        return match.group(1)
+    return text.split("?")[0].rstrip("/").split("/")[-1]
+
+
 def re_sub_env(content: str, key: str, value: str) -> str:
-    import re
     return re.sub(rf"^{key}=.*$", f"{key}={value}", content, flags=re.MULTILINE)

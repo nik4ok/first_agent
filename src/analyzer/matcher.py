@@ -110,21 +110,19 @@ class AIResumeAnalyzer:
         resume_text = self.load_resume_text()
 
         if not self.client:
-            return (
-                f"Здравствуйте! Меня заинтересовала позиция {vacancy_title} в компании {employer_name}. "
-                "Мой опыт и профессиональные навыки полностью соответствуют задачам и требованиям вашей роли. "
-                "Буду рад познакомиться ближе и обсудить детали на интервью!"
-            )
+            return self._local_cover_letter(vacancy_title, employer_name, vacancy_desc, match_info)
 
         prompt = (
-            f"Напиши убедительное, живое и лаконичное сопроводительное письмо от кандидата для вакансии '{vacancy_title}' в компанию '{employer_name}'.\n\n"
-            f"Требования к письму:\n"
-            f"1. Без штампов и клише ('Я стрессоустойчивый коммуникабельный профессионал').\n"
-            f"2. Персонализация: упомяни 2-3 ключевых навыка или задачи из описания вакансии, в которых у кандидата есть сильный опыт.\n"
-            f"3. Длина: 2-3 коротких абзаца (до 700 символов).\n"
-            f"4. Завершение с открытым призывом к диалогу/интервью.\n\n"
-            f"Резюме кандидата:\n{resume_text}\n\n"
-            f"Описание вакансии:\n{vacancy_desc[:2000]}"
+            f"Напиши сопроводительное письмо от кандидата на вакансию '{vacancy_title}' в '{employer_name}'.\n\n"
+            "Правила:\n"
+            "1. Без клише (стрессоустойчивый, коммуникабельный, командный игрок).\n"
+            "2. Первое предложение: почему именно эта роль и компания — из должности и опыта резюме.\n"
+            "3. Дальше 2 факта с цифрами или проектами СТРОГО из текста резюме, которые бьются с вакансией.\n"
+            "4. Не выдумывай компании, стеки, цифры и должности, которых нет в резюме.\n"
+            "5. 3 коротких абзаца, 700–1100 символов, на русском, обращение «вы» с маленькой буквы.\n"
+            "6. Финал — конкретный созвон, без «буду рад сотрудничеству».\n\n"
+            f"Резюме:\n{resume_text}\n\n"
+            f"Вакансия:\n{vacancy_desc[:2000]}"
         )
 
         try:
@@ -139,10 +137,177 @@ class AIResumeAnalyzer:
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error(f"Ошибка генерации письма: {e}")
-            return (
-                f"Здравствуйте! Заинтересовала вакансия {vacancy_title} в {employer_name}. "
-                "Изучил стек и требования — мой практический опыт отлично подходит под задачи команды. Буду рад обсудить подробности на интервью!"
-            )
+            return self._local_cover_letter(vacancy_title, employer_name, vacancy_desc, match_info)
+
+    def parse_resume_profile(self) -> Dict[str, Any]:
+        """Должность, компания и факты с цифрами — только из текущего файла резюме."""
+        summary = self.get_resume_summary()
+        text = summary.get("full_text") or self.load_resume_text()
+        role = self._extract_desired_role(text) or str(summary.get("title") or "").strip()
+        if role.lower() in {"специалист", "резюме не заполнено. отредактируйте data/my_resume.txt."}:
+            role = ""
+        return {
+            "role": role[:120],
+            "company": self._extract_last_company(text),
+            "skills": list(summary.get("skills") or [])[:12],
+            "achievements": self._extract_metric_bullets(text),
+        }
+
+    def _local_cover_letter(
+        self,
+        vacancy_title: str,
+        employer_name: str,
+        vacancy_desc: str,
+        match_info: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Письмо из фактов текущего резюме, без зашитого профиля конкретного человека."""
+        match_info = match_info or {}
+        profile = self.parse_resume_profile()
+        matched = [str(s) for s in (match_info.get("matching_skills") or []) if s]
+        if not matched:
+            matched = [str(s) for s in (profile.get("skills") or [])[:5]]
+        skill_str = ", ".join(matched[:5]) if matched else "релевантный стек из резюме"
+
+        role = profile.get("role") or "специалист"
+        company = profile.get("company") or ""
+        who = f"я {role}" + (f" в {company}" if company else "")
+        bullets = self._select_resume_bullets(vacancy_title, vacancy_desc, profile)
+        letter = (
+            f"Здравствуйте!\n\n"
+            f"Откликаюсь на {vacancy_title} в {employer_name}: {who}, "
+            f"в работе опираюсь на {skill_str}.\n\n"
+            f"{bullets}\n\n"
+            f"Могу за 20 минут разобрать, как этот опыт закрывает задачи роли — удобно созвониться на этой неделе."
+        )
+        return letter[:1400]
+
+    def _select_resume_bullets(
+        self,
+        vacancy_title: str,
+        vacancy_desc: str,
+        profile: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        profile = profile or self.parse_resume_profile()
+        hay = f"{vacancy_title} {vacancy_desc}".lower()
+        achievements = list(profile.get("achievements") or [])
+        scored = sorted(achievements, key=lambda bullet: self._score_bullet(bullet, hay), reverse=True)
+        picked: List[str] = []
+        for bullet in scored:
+            if bullet not in picked:
+                picked.append(bullet)
+            if len(picked) == 2:
+                break
+        if len(picked) < 2:
+            for skill in profile.get("skills") or []:
+                extra = f"В резюме есть практический опыт с {skill}, это напрямую стыкуется с задачами роли."
+                if extra not in picked:
+                    picked.append(extra)
+                if len(picked) == 2:
+                    break
+        if not picked:
+            picked = ["Готов разобрать ваш контур по резюме и показать, какие задачи закрывал на похожих ролях."]
+        return "• " + "\n• ".join(picked[:2])
+
+    def _extract_desired_role(self, text: str) -> str:
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        for idx, line in enumerate(lines):
+            if re.search(r"желаемая должность", line, re.I):
+                after = re.sub(r".*должность[^:]*:\s*", "", line, flags=re.I).strip()
+                after = re.sub(r"\s+и зарплата.*$", "", after, flags=re.I).strip(" .:-")
+                if after and not re.search(r"желаемая должность", after, re.I):
+                    return after[:120]
+                if idx + 1 < len(lines):
+                    nxt = re.sub(r"^[\-—·•*]+\s*", "", lines[idx + 1]).strip()
+                    if nxt and not re.search(r"специализац|зарплат|тип занятости", nxt, re.I):
+                        return nxt[:120]
+        role_re = re.compile(
+            r"^(senior|lead|middle|junior|staff|principal)?\s*"
+            r"(product |data |системный |бизнес.?|маркетинг.?|python |backend |frontend |fullstack )?"
+            r"(analyst|аналитик|developer|разработчик|engineer|инженер|manager|менеджер|designer|дизайнер)\b",
+            re.I,
+        )
+        for line in lines:
+            clean = re.sub(r"^[\-—·•*]+\s*", "", line).strip()
+            if role_re.search(clean) and len(clean) <= 80:
+                return clean[:120]
+        return ""
+
+    def _extract_last_company(self, text: str) -> str:
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        skip = re.compile(
+            r"опыт работы|настоящее время|месяц|город|москва|информационн|розничн|специализац|"
+            r"желаемая|прожива|гражданств|мужчин|женщин|телефон|зарплат|занятост",
+            re.I,
+        )
+        start = 0
+        for idx, line in enumerate(lines):
+            if re.search(r"опыт работы", line, re.I):
+                start = idx + 1
+                break
+        for line in lines[start : start + 12]:
+            clean = re.sub(r"^[\-—·•*]+\s*", "", line).strip()
+            if skip.search(clean) or re.search(r"\d{4}", clean) or len(clean) < 2 or len(clean) > 60:
+                continue
+            if re.search(r"analyst|аналитик|developer|engineer|менеджер", clean, re.I):
+                continue
+            return clean[:80]
+        return ""
+
+    def _extract_metric_bullets(self, text: str) -> List[str]:
+        skip = re.compile(
+            r"@|\+7|родил|прожива|гражданств|резюме обновл|мужчина|женщина|предпочитаем|"
+            r"разрешение на работу|лет, родился|настоящее время",
+            re.I,
+        )
+        metric = re.compile(
+            r"(\d+[.,]?\d*\s*%|\d+\s*\+|млн|миллиард|млрд|тыс\.|ebitda|п\.п|руб|p99|latency|nps|gmv|ltv)",
+            re.I,
+        )
+        out: List[str] = []
+        seen = set()
+        buffer = ""
+        for raw in text.splitlines():
+            stripped = raw.strip()
+            is_new = bool(re.match(r"^[·•\-—*]\s+", stripped))
+            line = re.sub(r"^[\s·•\-\—*]+", "", stripped).strip()
+            if not line:
+                self._push_metric_bullet(buffer, skip, metric, out, seen)
+                buffer = ""
+                continue
+            if buffer and line[:1].islower() and not is_new:
+                buffer = f"{buffer} {line}"
+                continue
+            self._push_metric_bullet(buffer, skip, metric, out, seen)
+            buffer = line
+        self._push_metric_bullet(buffer, skip, metric, out, seen)
+        return out[:12]
+
+    @staticmethod
+    def _push_metric_bullet(
+        line: str,
+        skip: re.Pattern,
+        metric: re.Pattern,
+        out: List[str],
+        seen: set,
+    ) -> None:
+        text = (line or "").strip()
+        if len(text) < 40 or skip.search(text) or not metric.search(text):
+            return
+        key = text[:90].lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(text[:320])
+
+    @staticmethod
+    def _score_bullet(bullet: str, hay: str) -> int:
+        tokens = [
+            "a/b", "аб", "sql", "python", "retention", "марж", "ebitda", "кэшбек",
+            "подписк", "ml", "дашборд", "qlik", "финмодел", "тариф", "clickhouse",
+            "api", "backend", "latency", "gmv", "nps", "ltv", "эксперимент",
+        ]
+        b = bullet.lower()
+        return sum(2 for t in tokens if t in hay and t in b) + sum(1 for t in tokens if t in b)
 
     def extract_skills_from_text(self, text: str, explicit_skills: Optional[str] = None) -> List[str]:
         """Извлечение известных технических, аналитических и профессиональных навыков из текста."""
@@ -263,14 +428,8 @@ class AIResumeAnalyzer:
         text = self.load_resume_text()
         lines = [line.strip() for line in text.split("\n") if line.strip()]
 
-        # Ищем желаемую должность / специализацию
-        title = ""
-        for line in lines:
-            if re.search(r"(должность|специализация|профиль|позиция):", line, re.I):
-                clean_title = re.sub(r"[#\*]|\b(должность|специализация|профиль|позиция):\s*", "", line, flags=re.I).strip()
-                if clean_title:
-                    title = clean_title
-                    break
+        # Ищем желаемую должность / специализацию (в т.ч. на следующей строке, как в выгрузке HH)
+        title = self._extract_desired_role(text)
 
         if not title:
             for line in lines:

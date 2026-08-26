@@ -1,14 +1,5 @@
-import logging
-from typing import Dict, Any, Optional
-import requests
-
-from src.config import settings
-from src.auth.hh_oauth import HHOAuthManager
-
-logger = logging.getLogger(__name__)
-
-
 import asyncio
+import concurrent.futures
 import logging
 from typing import Dict, Any, Optional
 import requests
@@ -21,10 +12,9 @@ logger = logging.getLogger(__name__)
 
 class HHResponder:
     """
-    Модуль отправки откликов на вакансии HeadHunter.
-    Поддерживает:
-    1. Официальный API (POST /negotiations)
-    2. Автоматический браузерный Playwright-движок (при ограничении соискательского API 403 Forbidden)
+    Отправка откликов на вакансии HeadHunter.
+    Публичный API соискателя почти всегда отвечает 403 — поэтому при живой
+    браузерной сессии сразу идём в Playwright.
     """
 
     def __init__(self, auth_manager: Optional[HHOAuthManager] = None):
@@ -33,14 +23,37 @@ class HHResponder:
         self.browser_session_file = settings.DATA_DIR / "browser_state.json"
 
     def apply(self, vacancy_id: str, resume_id: Optional[str] = None, message: str = "") -> Dict[str, Any]:
+        result = self._dispatch_apply(vacancy_id, resume_id=resume_id, message=message)
+        if result.get("success"):
+            try:
+                from src.parser.applications_log import get_sent_log
+
+                get_sent_log().record_from_excel_row(
+                    vacancy_id,
+                    method=str(result.get("method") or "browser"),
+                    already_applied=bool(result.get("already_applied")),
+                    cover_letter=message,
+                )
+            except Exception as exc:
+                logger.warning("Не удалось записать журнал откликов: %s", exc)
+        return result
+
+    def _dispatch_apply(
+        self, vacancy_id: str, resume_id: Optional[str] = None, message: str = ""
+    ) -> Dict[str, Any]:
         """
         Отправка отклика на вакансию.
-        1. Сначала пробует официальный API.
-        2. При ошибке 403 (соискательский API закрыт HH) переключается на браузерную сессию Playwright.
+        1. Если есть сохранённая сессия браузера — Playwright.
+        2. Иначе официальный API (часто 403).
+        3. Fallback снова на Playwright, если сессия появилась.
         """
         target_resume_id = resume_id or settings.HH_RESUME_ID
 
-        # Проверяем наличие токена OAuth
+        if self.browser_session_file.exists():
+            browser_result = self._apply_via_browser(vacancy_id, message)
+            if browser_result.get("success") or browser_result.get("error") != "no_browser_session":
+                return browser_result
+
         token = self.auth_manager.get_valid_access_token()
         if token:
             url = f"{self.base_url}/negotiations"
@@ -73,39 +86,13 @@ class HHResponder:
                         "message": "Отклик успешно отправлен через API HeadHunter!",
                         "data": response.headers.get("Location") or "Applied",
                     }
+                logger.info("HH API negotiations: %s %s", response.status_code, response.text[:200])
             except Exception as e:
-                logger.warning(f"Ошибка вызова API negotiations: {e}")
+                logger.warning("Ошибка вызова API negotiations: %s", e)
 
-        # Если API вернул 403 (или нет токена), пробуем автоматический Playwright движок
         if self.browser_session_file.exists():
-            try:
-                from src.responder.playwright_solver import PlaywrightFormSolver
-                solver = PlaywrightFormSolver(headless=True)
-                vacancy_url = f"https://hh.ru/vacancy/{vacancy_id}"
-                
-                # Запускаем playwright solver в текущем или новом event loop
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        import concurrent.futures
-                        with concurrent.futures.ThreadPoolExecutor() as pool:
-                            result = pool.submit(
-                                lambda: asyncio.run(solver.solve_and_apply(vacancy_url, cover_letter=message))
-                            ).result()
-                    else:
-                        result = loop.run_until_complete(solver.solve_and_apply(vacancy_url, cover_letter=message))
-                except Exception:
-                    result = asyncio.run(solver.solve_and_apply(vacancy_url, cover_letter=message))
+            return self._apply_via_browser(vacancy_id, message)
 
-                if result.get("success"):
-                    result["method"] = "browser"
-                    return result
-                elif result.get("error") != "no_browser_session":
-                    return result
-            except Exception as e:
-                logger.error(f"Ошибка запуска браузерного отклика: {e}")
-
-        # Если браузерная сессия еще не создана
         vacancy_url = f"https://hh.ru/vacancy/{vacancy_id}"
         return {
             "success": False,
@@ -117,3 +104,36 @@ class HHResponder:
                 "или откройте вакансию на hh.ru."
             ),
         }
+
+    def _apply_via_browser(self, vacancy_id: str, message: str) -> Dict[str, Any]:
+        try:
+            from src.responder.playwright_solver import PlaywrightFormSolver
+
+            solver = PlaywrightFormSolver(headless=True)
+            vacancy_url = f"https://hh.ru/vacancy/{vacancy_id}"
+            result = self._run_playwright_apply(solver, vacancy_url, message)
+            if result.get("success"):
+                result["method"] = "browser"
+            return result
+        except Exception as e:
+            logger.error("Ошибка запуска браузерного отклика: %s", e)
+            return {
+                "success": False,
+                "error": "browser_error",
+                "message": f"Ошибка браузерного отклика: {e}",
+            }
+
+    @staticmethod
+    def _run_playwright_apply(solver, vacancy_url: str, message: str) -> Dict[str, Any]:
+        """Playwright async API нельзя крутить в уже запущенном event loop — выносим в поток."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(
+                    lambda: asyncio.run(solver.solve_and_apply(vacancy_url, cover_letter=message))
+                ).result()
+        return asyncio.run(solver.solve_and_apply(vacancy_url, cover_letter=message))

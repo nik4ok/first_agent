@@ -1,6 +1,7 @@
 import asyncio
 import io
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import pandas as pd
@@ -10,14 +11,14 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from src.config import settings, update_env_variable
-from src.parser import HHClient, ExcelStorage
+from src.parser import HHClient, ExcelStorage, get_sent_log
 from src.analyzer import AIResumeAnalyzer
 from src.responder import HHResponder
+from src.responder.autopilot import get_autopilot
 from src.auth import HHOAuthManager
+from src.auth.hh_oauth import parse_hh_resume_id
 
 logger = logging.getLogger(__name__)
-
-app = FastAPI(title="AI Job Agent Web Dashboard")
 
 templates_dir = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(templates_dir))
@@ -32,6 +33,37 @@ browser_login_state: Dict[str, Any] = {
     "browser": None,
     "context": None,
 }
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Тикер автопилота живёт и при `python main.py web`, без Telegram-планировщика."""
+    stop = asyncio.Event()
+
+    async def _loop():
+        while not stop.is_set():
+            try:
+                await get_autopilot().tick()
+            except Exception:
+                logger.exception("Сбой тика автопилота")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=15)
+            except asyncio.TimeoutError:
+                pass
+
+    task = asyncio.create_task(_loop())
+    try:
+        seeded = get_sent_log().seed_from_known_sources()
+        if seeded:
+            logger.info("Журнал откликов: подтянуто %s записей из Excel/автопилота", seeded)
+    except Exception:
+        logger.exception("Не удалось сидировать журнал откликов")
+    yield
+    stop.set()
+    task.cancel()
+
+
+app = FastAPI(title="AI Job Agent Web Dashboard", lifespan=lifespan)
 
 
 class SearchRequest(BaseModel):
@@ -64,7 +96,15 @@ class AuthCodeRequest(BaseModel):
 class AutopilotRequest(BaseModel):
     min_score: int = 70
     max_count: int = 50
-    delay_seconds: float = 2.0
+    duration_hours: float = 3.0
+    delay_seconds: float = 90.0
+    vacancy_ids: Optional[List[str]] = None
+    mode: str = "review"
+    keywords: str = ""
+
+
+class ReviewLetterRequest(BaseModel):
+    letter: Optional[str] = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -256,45 +296,11 @@ async def upload_resume_file(file: UploadFile = File(...)):
 
         # Сохраняем в data/my_resume.txt
         settings.RESUME_PATH.write_text(extracted_text, encoding="utf-8")
-
-        # Пересчитываем скоринг вакансий
-        df = storage.load_all()
-        if not df.empty:
-            id_col = "ID Вакансии" if "ID Вакансии" in df.columns else "id"
-            title_col = "Название вакансии" if "Название вакансии" in df.columns else "title"
-            desc_col = "Полное описание" if "Полное описание" in df.columns else "description"
-            skills_col = "Ключевые навыки" if "Ключевые навыки" in df.columns else "skills"
-
-            for _, row in df.iterrows():
-                v_id = str(row[id_col])
-                title = str(row.get(title_col, ""))
-                desc = str(row.get(desc_col, ""))
-                skills = str(row.get(skills_col, ""))
-
-                match_info = analyzer.analyze_match(title, desc, skills)
-                score = match_info.get("score", 50)
-                pros = match_info.get("pros", "")
-                cons = match_info.get("cons", "")
-                matching_skills = ", ".join(match_info.get("matching_skills", []))
-                missing_skills = ", ".join(match_info.get("missing_skills", []))
-
-                notes_str = f"Плюсы: {pros} | Минусы: {cons}"
-                if matching_skills:
-                    notes_str += f" | Match Skills: {matching_skills}"
-                if missing_skills:
-                    notes_str += f" | Missing Skills: {missing_skills}"
-
-                storage.update_status(
-                    vacancy_id=v_id,
-                    status=str(row.get("Статус", "ANALYZED")),
-                    match_score=score,
-                    notes=notes_str,
-                )
-
+        rescored = _rescore_vacancies()
         summary = analyzer.get_resume_summary()
         return {
             "status": "ok",
-            "message": f"Файл {file.filename} успешно обработан!",
+            "message": f"Файл {file.filename} успешно обработан! Пересчитано вакансий: {rescored}.",
             "summary": summary,
         }
 
@@ -311,42 +317,54 @@ async def update_resume_text(req: ResumeTextUpdateRequest):
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="Текст резюме не может быть пустым.")
     settings.RESUME_PATH.write_text(req.text.strip(), encoding="utf-8")
-
-    # Автоматически пересчитываем скоринг и заметки для всех существующих вакансий под новое резюме
-    df = storage.load_all()
-    if not df.empty:
-        id_col = "ID Вакансии" if "ID Вакансии" in df.columns else "id"
-        title_col = "Название вакансии" if "Название вакансии" in df.columns else "title"
-        desc_col = "Полное описание" if "Полное описание" in df.columns else "description"
-        skills_col = "Ключевые навыки" if "Ключевые навыки" in df.columns else "skills"
-
-        for _, row in df.iterrows():
-            v_id = str(row[id_col])
-            title = str(row.get(title_col, ""))
-            desc = str(row.get(desc_col, ""))
-            skills = str(row.get(skills_col, ""))
-
-            match_info = analyzer.analyze_match(title, desc, skills)
-            score = match_info.get("score", 50)
-            pros = match_info.get("pros", "")
-            cons = match_info.get("cons", "")
-            matching_skills = ", ".join(match_info.get("matching_skills", []))
-            missing_skills = ", ".join(match_info.get("missing_skills", []))
-
-            notes_str = f"Плюсы: {pros} | Минусы: {cons}"
-            if matching_skills:
-                notes_str += f" | Match Skills: {matching_skills}"
-            if missing_skills:
-                notes_str += f" | Missing Skills: {missing_skills}"
-
-            storage.update_status(
-                vacancy_id=v_id,
-                status=str(row.get("Статус", "ANALYZED")),
-                match_score=score,
-                notes=notes_str,
-            )
-
+    _rescore_vacancies()
     return {"status": "ok", "summary": analyzer.get_resume_summary()}
+
+
+def _match_notes(match_info: Dict[str, Any]) -> str:
+    pros = match_info.get("pros", "")
+    cons = match_info.get("cons", "")
+    matching_skills = ", ".join(match_info.get("matching_skills", []))
+    missing_skills = ", ".join(match_info.get("missing_skills", []))
+    notes_str = f"Плюсы: {pros} | Минусы: {cons}"
+    if matching_skills:
+        notes_str += f" | Match Skills: {matching_skills}"
+    if missing_skills:
+        notes_str += f" | Missing Skills: {missing_skills}"
+    return notes_str
+
+
+def _rescore_vacancies() -> int:
+    """Пересчёт Match Score по текущему резюме одним проходом записи в Excel."""
+    df = storage.load_all()
+    if df.empty:
+        return 0
+
+    id_col = "ID Вакансии" if "ID Вакансии" in df.columns else "id"
+    title_col = "Название вакансии" if "Название вакансии" in df.columns else "title"
+    desc_col = "Полное описание" if "Полное описание" in df.columns else "description"
+    skills_col = "Ключевые навыки" if "Ключевые навыки" in df.columns else "skills"
+    status_col = "Статус" if "Статус" in df.columns else "status"
+    keep_status = {"APPLIED", "INVITED", "SKIPPED", "QUEUED"}
+
+    updates = []
+    for _, row in df.iterrows():
+        v_id = str(row[id_col])
+        title = str(row.get(title_col, ""))
+        desc = str(row.get(desc_col, ""))
+        skills = str(row.get(skills_col, ""))
+        current_status = str(row.get(status_col, "ANALYZED") or "ANALYZED")
+
+        match_info = analyzer.analyze_match(title, desc, skills)
+        updates.append(
+            {
+                "id": v_id,
+                "status": current_status if current_status in keep_status else "ANALYZED",
+                "match_score": match_info.get("score", 50),
+                "notes": _match_notes(match_info),
+            }
+        )
+    return storage.update_rows(updates)
 
 
 @app.post("/api/sync-hh-resume")
@@ -380,6 +398,40 @@ async def sync_hh_resume(req: Optional[ResumeSelectRequest] = None):
             "message": "HeadHunter защищает текст резюме от прямого скачивания. Вставьте текст в открывшемся окне.",
             "summary": analyzer.get_resume_summary(),
         }
+
+
+@app.get("/api/my-resumes")
+async def api_my_resumes():
+    """Список резюме на HH для селектора в шапке."""
+    items = []
+    try:
+        if auth_mgr.get_valid_access_token():
+            items = auth_mgr.get_my_resumes()
+    except Exception as e:
+        logger.warning("Не удалось получить список резюме HH: %s", e)
+    return {
+        "status": "ok",
+        "items": items,
+        "active_resume_id": settings.HH_RESUME_ID,
+    }
+
+
+@app.post("/api/select-resume")
+async def api_select_resume(req: ResumeSelectRequest):
+    """Выбор активного резюме HH по ID или ссылке."""
+    resume_id = parse_hh_resume_id(req.resume_id)
+    if not resume_id or len(resume_id) < 8:
+        raise HTTPException(status_code=400, detail="Некорректный ID или ссылка на резюме.")
+    update_env_variable("HH_RESUME_ID", resume_id)
+    settings.HH_RESUME_ID = resume_id
+    try:
+        formatted_text = auth_mgr.download_and_format_resume(resume_id)
+        if formatted_text:
+            settings.RESUME_PATH.write_text(formatted_text, encoding="utf-8")
+            _rescore_vacancies()
+    except Exception as e:
+        logger.info("Текст резюме HH недоступен (%s), ID сохранён.", e)
+    return {"status": "ok", "selected_id": resume_id, "summary": analyzer.get_resume_summary()}
 
 
 @app.get("/api/vacancies")
@@ -425,18 +477,23 @@ async def get_vacancies():
 async def get_stats():
     """Сводная статистика базы вакансий и откликов для дашборда."""
     df = storage.load_all()
+    sent_count = get_sent_log().count()
+    has_resume = settings.RESUME_PATH.exists() and len(settings.RESUME_PATH.read_text(encoding="utf-8").strip()) > 20
     if df.empty:
         return {
             "total": 0,
-            "applied": 0,
+            "applied": sent_count,
+            "applied_excel": 0,
             "skipped": 0,
             "analyzed": 0,
             "new": 0,
+            "queued": 0,
+            "invited": 0,
             "high_match": 0,
             "medium_match": 0,
             "low_match": 0,
             "avg_score": 0,
-            "has_resume": settings.RESUME_PATH.exists() and len(settings.RESUME_PATH.read_text(encoding="utf-8").strip()) > 20,
+            "has_resume": has_resume,
         }
 
     status_col = "Статус" if "Статус" in df.columns else "status"
@@ -444,7 +501,7 @@ async def get_stats():
 
     scores = pd.to_numeric(df[score_col], errors="coerce").dropna()
     total = len(df)
-    applied = len(df[df[status_col] == "APPLIED"])
+    applied = sent_count
     skipped = len(df[df[status_col] == "SKIPPED"])
     analyzed = len(df[df[status_col] == "ANALYZED"])
     new_items = len(df[df[status_col] == "NEW"])
@@ -457,14 +514,17 @@ async def get_stats():
     return {
         "total": total,
         "applied": applied,
+        "applied_excel": len(df[df[status_col] == "APPLIED"]) if not df.empty else 0,
         "skipped": skipped,
         "analyzed": analyzed,
         "new": new_items,
+        "queued": len(df[df[status_col] == "QUEUED"]) if status_col in df.columns else 0,
+        "invited": len(df[df[status_col] == "INVITED"]) if status_col in df.columns else 0,
         "high_match": high_match,
         "medium_match": med_match,
         "low_match": low_match,
         "avg_score": avg_score,
-        "has_resume": settings.RESUME_PATH.exists() and len(settings.RESUME_PATH.read_text(encoding="utf-8").strip()) > 20,
+        "has_resume": has_resume,
     }
 
 
@@ -575,81 +635,65 @@ async def api_analyze():
 
 @app.post("/api/autopilot")
 async def api_autopilot(req: AutopilotRequest):
-    """
-    Автономный запуск автооткликов:
-    1. Находит все подходящие вакансии (Score >= min_score)
-    2. Сортирует по максимальной релевантности
-    3. Отправляет персональные отклики с задержкой (анти-спам)
-    4. Возвращает подробный отчет
-    """
-    df = storage.load_all()
-    if df.empty:
-        return {"status": "ok", "applied": 0, "failed": 0, "message": "База вакансий пуста."}
+    """Старт фоновой очереди откликов. HTTP сразу возвращается, тикер шлёт по расписанию."""
+    session_file = settings.DATA_DIR / "browser_state.json"
+    if not session_file.exists() and not auth_mgr.get_valid_access_token():
+        raise HTTPException(
+            status_code=400,
+            detail="Сначала сохраните сессию браузера (кнопка «Вход в браузере») или пройдите OAuth.",
+        )
+    result = get_autopilot().start(
+        min_score=req.min_score,
+        max_count=req.max_count,
+        duration_hours=req.duration_hours,
+        delay_seconds=req.delay_seconds,
+        vacancy_ids=req.vacancy_ids,
+        mode=req.mode,
+        keywords=req.keywords,
+    )
+    return result
 
-    id_col = "ID Вакансии" if "ID Вакансии" in df.columns else "id"
-    title_col = "Название вакансии" if "Название вакансии" in df.columns else "title"
-    comp_col = "Компания" if "Компания" in df.columns else "employer"
-    status_col = "Статус" if "Статус" in df.columns else "status"
-    score_col = "Score (%)" if "Score (%)" in df.columns else "match_score"
-    letter_col = "Сопроводительное письмо" if "Сопроводительное письмо" in df.columns else "cover_letter"
-    desc_col = "Полное описание" if "Полное описание" in df.columns else "description"
 
-    # Фильтруем только еще не отправленные вакансии
-    unapplied = df[~df[status_col].isin(["APPLIED", "SKIPPED", "INVITED"])].copy()
-    if unapplied.empty:
-        return {"status": "ok", "applied": 0, "failed": 0, "message": "Нет новых неотправленных вакансий в базе."}
+@app.get("/api/autopilot/status")
+async def api_autopilot_status():
+    return get_autopilot().status()
 
-    # Преобразуем скор в число для сортировки
-    unapplied["num_score"] = pd.to_numeric(unapplied[score_col], errors="coerce").fillna(0)
-    
-    # Фильтруем по min_score
-    candidates = unapplied[unapplied["num_score"] >= req.min_score].sort_values(by="num_score", ascending=False)
-    
-    # Если мало вакансий со скором >= min_score, берем лучший топ
-    if candidates.empty:
-        candidates = unapplied.sort_values(by="num_score", ascending=False).head(req.max_count)
-    else:
-        candidates = candidates.head(req.max_count)
 
-    applied_results = []
-    failed_results = []
+@app.post("/api/autopilot/stop")
+async def api_autopilot_stop():
+    return get_autopilot().stop()
 
-    for _, row in candidates.iterrows():
-        v_id = str(row[id_col])
-        title = str(row.get(title_col, ""))
-        employer = str(row.get(comp_col, ""))
-        score = int(row.get("num_score", 0))
-        letter = str(row.get(letter_col, "") or "")
-        desc = str(row.get(desc_col, "") or "")
 
-        # Если письмо не было сгенерировано, генерируем на лету
-        if not letter or len(letter) < 20:
-            match_info = analyzer.analyze_match(title, desc, "")
-            letter = analyzer.generate_cover_letter(title, employer, desc, match_info)
+@app.post("/api/review/approve")
+async def api_review_approve(req: ReviewLetterRequest):
+    return await asyncio.to_thread(get_autopilot().approve, req.letter)
 
-        # Отправляем отклик через API
-        res = responder.apply(vacancy_id=v_id, resume_id=settings.HH_RESUME_ID or None, message=letter)
-        if res.get("success"):
-            storage.update_status(vacancy_id=v_id, status="APPLIED", cover_letter=letter)
-            applied_results.append({"id": v_id, "title": title, "employer": employer, "score": score})
-            logger.info(f"🚀 Автопилот успешно откликнулся на: [{v_id}] {title} ({employer}) - {score}%")
-        else:
-            err_msg = res.get("message", "Неизвестная ошибка")
-            failed_results.append({"id": v_id, "title": title, "employer": employer, "error": err_msg})
-            logger.warning(f"⚠️ Ошибка отклика на [{v_id}] {title}: {err_msg}")
 
-        # Безопасная пауза против блокировок анти-спама
-        if req.delay_seconds > 0:
-            await asyncio.sleep(req.delay_seconds)
+@app.post("/api/review/skip")
+async def api_review_skip():
+    return get_autopilot().skip()
 
-    return {
-        "status": "ok",
-        "applied_count": len(applied_results),
-        "failed_count": len(failed_results),
-        "applied_items": applied_results,
-        "failed_items": failed_results,
-        "message": f"Автопилот завершил работу: успешно отправлено {len(applied_results)} откликов из {len(candidates)} отобранных.",
-    }
+
+@app.post("/api/review/regenerate")
+async def api_review_regenerate():
+    return await asyncio.to_thread(get_autopilot().regenerate_letter)
+
+
+@app.post("/api/review/letter")
+async def api_review_letter(req: ReviewLetterRequest):
+    if not req.letter:
+        raise HTTPException(status_code=400, detail="Пустое письмо")
+    return get_autopilot().update_pending_letter(req.letter)
+
+
+@app.get("/api/autopilot/status")
+async def api_autopilot_status():
+    return get_autopilot().status()
+
+
+@app.post("/api/autopilot/stop")
+async def api_autopilot_stop():
+    return get_autopilot().stop()
 
 
 @app.post("/api/apply/{vacancy_id}")
@@ -658,14 +702,35 @@ async def api_apply(vacancy_id: str):
     df = storage.load_all()
     id_col = "ID Вакансии" if "ID Вакансии" in df.columns else "id"
     row = df[df[id_col].astype(str) == str(vacancy_id)]
-    
+
     letter = ""
-    if not row.empty and "Сопроводительное письмо" in row.columns:
-        letter = str(row["Сопроводительное письмо"].values[0])
+    title = ""
+    employer = ""
+    desc = ""
+    skills = ""
+    if not row.empty:
+        rec = row.iloc[0]
+        if "Сопроводительное письмо" in row.columns:
+            letter = str(rec.get("Сопроводительное письмо") or "")
+        title = str(rec.get("Название вакансии") or rec.get("title") or "")
+        employer = str(rec.get("Компания") or rec.get("employer") or "")
+        desc = str(rec.get("Полное описание") or rec.get("description") or "")
+        skills = str(rec.get("Ключевые навыки") or rec.get("skills") or "")
+
+    weak = (
+        not letter
+        or letter.lower() in {"nan", "none"}
+        or len(letter) < 80
+        or "буду рад" in letter.lower()
+        or "опираюсь на" in letter.lower()
+    )
+    if weak and title:
+        match_info = analyzer.analyze_match(title, desc, skills)
+        letter = analyzer.generate_cover_letter(title, employer, desc, match_info)
 
     res = responder.apply(vacancy_id=vacancy_id, resume_id=settings.HH_RESUME_ID or None, message=letter)
     if res.get("success"):
-        storage.update_status(vacancy_id=vacancy_id, status="APPLIED")
+        storage.update_status(vacancy_id=vacancy_id, status="APPLIED", cover_letter=letter)
     return res
 
 
@@ -679,8 +744,15 @@ async def api_skip(vacancy_id: str):
 @app.post("/api/letter/{vacancy_id}")
 async def api_update_letter(vacancy_id: str, req: LetterUpdateRequest):
     """Обновление текста сопроводительного письма."""
-    success = storage.update_status(vacancy_id=vacancy_id, status="ANALYZED", cover_letter=req.letter)
+    success = storage.update_status(vacancy_id=vacancy_id, cover_letter=req.letter)
     return {"success": success}
+
+
+@app.get("/api/sent-applications")
+async def api_sent_applications():
+    """Журнал реально отправленных откликов (не статус APPLIED в vacancies.xlsx)."""
+    items = get_sent_log().list_all()
+    return {"count": len(items), "items": items}
 
 
 @app.get("/api/download-excel")
@@ -691,6 +763,19 @@ async def download_excel():
     return FileResponse(
         path=str(settings.EXCEL_PATH),
         filename="vacancies.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@app.get("/api/download-sent")
+async def download_sent():
+    """Скачивание журнала реальных откликов."""
+    path = get_sent_log().ensure_xlsx()
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Журнал откликов ещё пуст.")
+    return FileResponse(
+        path=str(path),
+        filename="sent_applications.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 

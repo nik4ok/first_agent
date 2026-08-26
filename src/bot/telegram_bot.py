@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 from pathlib import Path
 from typing import Optional
@@ -22,9 +23,10 @@ from aiogram.types import (
 
 from src.config import settings, update_env_variable
 from src.auth.hh_oauth import HHOAuthManager
-from src.parser import HHClient, ExcelStorage, AREA_LABELS, AREA_TOGGLE_CYCLE
+from src.parser import HHClient, ExcelStorage, AREA_LABELS, AREA_TOGGLE_CYCLE, get_sent_log
 from src.analyzer import AIResumeAnalyzer
 from src.responder import HHResponder
+from src.responder.autopilot import get_autopilot, parse_duration_arg
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ class BotStates(StatesGroup):
     waiting_for_default_search = State()
     waiting_for_auth_code = State()
     waiting_for_resume_id = State()
+    waiting_for_review_letter = State()
 
 
 def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
@@ -51,6 +54,7 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
     )
     builder.row(
         KeyboardButton(text="📄 Мои резюме"),
+        KeyboardButton(text="📊 Аудит резюме"),
         KeyboardButton(text="⚙️ Настройки"),
     )
     builder.row(
@@ -64,7 +68,7 @@ def get_main_inline_menu() -> InlineKeyboardMarkup:
     """Создает интерактивную панель управления."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🔍 Найти вакансии", callback_data="menu_search")
-    builder.button(text="🚀 Автопилот (Топ-отклики)", callback_data="menu_autopilot")
+    builder.button(text="🚀 Очередь на подтверждение", callback_data="menu_autopilot")
     builder.button(text="🤖 Запустить AI-анализ", callback_data="menu_analyze")
     builder.button(text="📊 Статистика", callback_data="menu_stats")
     builder.button(text="📥 Скачать Excel", callback_data="menu_excel")
@@ -90,12 +94,45 @@ def get_settings_inline_menu() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def review_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Отправить", callback_data="rv_ok")
+    builder.button(text="⏭ Пропустить", callback_data="rv_skip")
+    builder.button(text="✏️ Заменить письмо", callback_data="rv_edit")
+    builder.button(text="🔄 Переписать", callback_data="rv_regen")
+    builder.adjust(2, 2)
+    return builder.as_markup()
+
+
+def format_review_card(pending: dict, header: str = "") -> str:
+    letter = str(pending.get("letter") or "")
+    if len(letter) > 2200:
+        letter = letter[:2200] + "…"
+    bits = [pending.get("employer"), pending.get("city")]
+    if pending.get("score"):
+        bits.append(f"match {pending.get('score')}%")
+    meta = " · ".join(str(b) for b in bits if b)
+    idx = pending.get("index") or "?"
+    total = pending.get("total") or "?"
+    title = html.escape(str(pending.get("title") or "Вакансия"))
+    url = html.escape(str(pending.get("url") or f"https://hh.ru/vacancy/{pending.get('id')}"))
+    top = header or f"На подтверждении {idx} из {total}"
+    return (
+        f"{html.escape(top)}\n\n"
+        f"<b>{title}</b>\n"
+        f"{html.escape(meta)}\n"
+        f'<a href="{url}">Открыть вакансию</a>\n\n'
+        f"<b>Письмо:</b>\n{html.escape(letter)}"
+    )
+
+
 async def setup_bot_commands(bot: Bot):
     """Регистрирует подсказки команд в интерфейсе Telegram (кнопка Меню /)."""
     commands = [
         BotCommand(command="start", description="🏠 Главное меню и статус"),
         BotCommand(command="menu", description="📱 Открыть панель управления"),
-        BotCommand(command="autopilot", description="🚀 Авто-отклики (топ-вакансии)"),
+        BotCommand(command="review", description="✍️ Очередь: вакансия + письмо на ок/правку/пропуск"),
+        BotCommand(command="autopilot", description="🚀 Авто-отклики без подтверждения"),
         BotCommand(command="search", description="🔍 Поиск вакансий (<запрос>)"),
         BotCommand(command="audit", description="📊 Анализ рынка и аудит резюме"),
         BotCommand(command="analyze", description="🤖 Запустить AI-анализ базы"),
@@ -213,7 +250,8 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
             f"• Всего сохранено вакансий: **{total}**\n"
             f"• 🆕 Новых (NEW): **{status_counts.get('NEW', 0)}**\n"
             f"• 🧠 Проанализировано (ANALYZED): **{status_counts.get('ANALYZED', 0)}**\n"
-            f"• 🚀 Отправлено откликов (APPLIED): **{status_counts.get('APPLIED', 0)}**\n"
+            f"• 🚀 Реально отправлено (журнал): **{get_sent_log().count()}**\n"
+            f"• 📋 Помечено APPLIED в Excel: **{status_counts.get('APPLIED', 0)}**\n"
             f"• 🎉 Приглашений от HR (INVITED): **{status_counts.get('INVITED', 0)}**\n"
             f"• 🚫 Пропущено (SKIPPED): **{status_counts.get('SKIPPED', 0)}**\n"
         )
@@ -612,75 +650,232 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
             parse_mode="Markdown",
         )
 
+    @dp.message(Command("review"))
+    async def cmd_review(message: types.Message):
+        """Очередь с подтверждением. /review 50 продуктовый аналитик, SQL"""
+        parts = (message.text or "").split(maxsplit=2)
+        max_count = 50
+        keywords = ""
+        if len(parts) > 1 and parts[1].isdigit():
+            max_count = int(parts[1])
+        if len(parts) > 2:
+            keywords = parts[2].strip()
+        engine = get_autopilot()
+        current = engine.status()
+        if current.get("running"):
+            pending = current.get("pending")
+            if pending and (current.get("mode") or "review") != "auto":
+                await message.answer(
+                    format_review_card(pending),
+                    reply_markup=review_keyboard(),
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+                return
+            await message.answer(current.get("message") or "Очередь уже запущена.")
+            return
+        result = engine.start(
+            min_score=70,
+            max_count=max_count,
+            mode="review",
+            keywords=keywords,
+            duration_hours=0,
+        )
+        pending = result.get("pending")
+        if pending:
+            await message.answer(
+                format_review_card(pending, result.get("message") or ""),
+                reply_markup=review_keyboard(),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        else:
+            await message.answer(result.get("message") or "Не удалось собрать очередь.")
+
     @dp.message(F.text.lower().contains("автопилот") | Command("autopilot"))
     async def cmd_autopilot(message: types.Message):
-        """Автономная отправка откликов на лучшие вакансии."""
+        """Автомат без подтверждения. /autopilot 50 3h"""
         args = message.text.split()
-        max_count = 10
+        max_count = 50
+        duration_hours = 3.0
         if len(args) > 1 and args[1].isdigit():
             max_count = int(args[1])
+        if len(args) > 2:
+            try:
+                duration_hours = parse_duration_arg(args[2])
+            except ValueError:
+                await message.answer("Срок не распознан. Пример: `/autopilot 50 3h`", parse_mode="Markdown")
+                return
 
-        df = storage.load_all()
-        if df.empty:
-            await message.answer("⚠️ База вакансий пуста. Сначала выполните поиск вакансий через меню.")
+        engine = get_autopilot()
+        current = engine.status()
+        if current.get("running"):
+            builder = InlineKeyboardBuilder()
+            builder.button(text="⏹ Остановить очередь", callback_data="ap_stop")
+            await message.answer(
+                f"Очередь уже работает.\n{current.get('message')}\n"
+                f"Отправлено: {current.get('applied_count', 0)} · осталось: {current.get('remaining', 0)}",
+                reply_markup=builder.as_markup(),
+            )
             return
 
-        id_col = "ID Вакансии" if "ID Вакансии" in df.columns else "id"
-        title_col = "Название вакансии" if "Название вакансии" in df.columns else "title"
-        comp_col = "Компания" if "Компания" in df.columns else "employer"
-        status_col = "Статус" if "Статус" in df.columns else "status"
-        score_col = "Score (%)" if "Score (%)" in df.columns else "match_score"
-        desc_col = "Полное описание" if "Полное описание" in df.columns else "description"
-        letter_col = "Сопроводительное письмо" if "Сопроводительное письмо" in df.columns else "cover_letter"
-
-        unapplied = df[~df[status_col].isin(["APPLIED", "SKIPPED", "INVITED"])].copy()
-        if unapplied.empty:
-            await message.answer("ℹ️ Нет новых неотправленных вакансий в базе. Все актуальные отклики уже сделаны.")
+        if message.text and not message.text.startswith("/") and "автопилот" in message.text.lower():
+            builder = InlineKeyboardBuilder()
+            builder.button(text="10 на подтверждение", callback_data="rv_run:10")
+            builder.button(text="50 на подтверждение", callback_data="rv_run:50")
+            builder.button(text="Автомат 50 за 3 часа", callback_data="ap_run:50:3")
+            builder.button(text="⏹ Стоп", callback_data="ap_stop")
+            builder.adjust(1, 1, 1, 1)
+            await message.answer(
+                "С подтверждением письма: `/review 50 продуктовый аналитик, SQL`\n"
+                "Без подтверждения: `/autopilot 50 3h`",
+                reply_markup=builder.as_markup(),
+                parse_mode="Markdown",
+            )
             return
 
-        unapplied["num_score"] = pd.to_numeric(unapplied[score_col], errors="coerce").fillna(0)
-        candidates = unapplied[unapplied["num_score"] >= 70].sort_values(by="num_score", ascending=False)
-        if candidates.empty:
-            candidates = unapplied.sort_values(by="num_score", ascending=False).head(max_count)
-        else:
-            candidates = candidates.head(max_count)
-
-        status_msg = await message.answer(
-            f"🚀 **Запущен автопилот:** отбор до {len(candidates)} лучших вакансий (Match ≥ 70%)...\n"
-            f"⏳ Безопасная отправка с анти-спам интервалом 2 сек.",
-            parse_mode="Markdown"
+        result = engine.start(
+            min_score=70,
+            max_count=max_count,
+            duration_hours=duration_hours,
+            mode="auto",
+        )
+        await message.answer(
+            f"{result.get('message')}\nСтатус: `{result.get('status')}`",
+            parse_mode="Markdown",
+            reply_markup=get_main_inline_menu(),
         )
 
-        applied_cnt = 0
-        for _, row in candidates.iterrows():
-            v_id = str(row[id_col])
-            title = str(row.get(title_col, ""))
-            employer = str(row.get(comp_col, ""))
-            letter = str(row.get(letter_col, "") or "")
-            desc = str(row.get(desc_col, "") or "")
-
-            if not letter or len(letter) < 20:
-                match_info = analyzer.analyze_match(title, desc, "")
-                letter = analyzer.generate_cover_letter(title, employer, desc, match_info)
-
-            res = responder.apply(vacancy_id=v_id, resume_id=settings.HH_RESUME_ID or None, message=letter)
-            if res.get("success"):
-                storage.update_status(vacancy_id=v_id, status="APPLIED", cover_letter=letter)
-                applied_cnt += 1
-            await asyncio.sleep(2)
-
-        await status_msg.edit_text(
-            f"🎉 **Автопилот успешно завершен!**\n\n"
-            f"✅ Отправлено откликов: **{applied_cnt}** из {len(candidates)}\n"
-            f"📄 Привязано резюме: `{settings.HH_RESUME_ID or 'по умолчанию'}`",
-            reply_markup=get_main_inline_menu(),
+    @dp.callback_query(F.data.startswith("ap_run:"))
+    async def cb_ap_run(callback: types.CallbackQuery):
+        _, count_s, hours_s = callback.data.split(":")
+        result = get_autopilot().start(
+            min_score=70,
+            max_count=int(count_s),
+            duration_hours=float(hours_s),
+            mode="auto",
+        )
+        await callback.answer("Очередь запущена")
+        await callback.message.answer(
+            f"{result.get('message')}\nСтатус: `{result.get('status')}`",
             parse_mode="Markdown",
         )
+
+    @dp.callback_query(F.data == "ap_stop")
+    async def cb_ap_stop(callback: types.CallbackQuery):
+        result = get_autopilot().stop()
+        await callback.answer("Остановлено")
+        await callback.message.answer(result.get("message") or "Автопилот остановлен")
 
     @dp.callback_query(F.data == "menu_autopilot")
     async def cb_menu_autopilot(callback: types.CallbackQuery):
         await callback.answer()
-        await cmd_autopilot(callback.message)
+        builder = InlineKeyboardBuilder()
+        builder.button(text="10 на подтверждение", callback_data="rv_run:10")
+        builder.button(text="50 на подтверждение", callback_data="rv_run:50")
+        builder.button(text="Автомат 50 за 3 часа", callback_data="ap_run:50:3")
+        builder.button(text="⏹ Стоп", callback_data="ap_stop")
+        builder.adjust(1, 1, 1, 1)
+        await callback.message.answer(
+            "С подтверждением: `/review 50 продуктовый аналитик, SQL`\n"
+            "Без подтверждения: `/autopilot 50 3h`",
+            reply_markup=builder.as_markup(),
+            parse_mode="Markdown",
+        )
+
+    @dp.callback_query(F.data.startswith("rv_run:"))
+    async def cb_rv_run(callback: types.CallbackQuery):
+        count = int(callback.data.split(":")[1])
+        result = get_autopilot().start(min_score=70, max_count=count, mode="review", duration_hours=0)
+        await callback.answer("Очередь на подтверждении")
+        pending = result.get("pending")
+        if pending:
+            await callback.message.answer(
+                format_review_card(pending, result.get("message") or ""),
+                reply_markup=review_keyboard(),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        else:
+            await callback.message.answer(result.get("message") or "Нет вакансий для очереди.")
+
+    @dp.callback_query(F.data == "rv_ok")
+    async def cb_rv_ok(callback: types.CallbackQuery):
+        await callback.answer("Отправляю на HH...")
+        result = await asyncio.to_thread(get_autopilot().approve)
+        status = result.get("status")
+        if status == "sent":
+            note = "✅ Отклик отправлен."
+        elif status == "failed":
+            err = (result.get("result") or {}).get("error") or result.get("message")
+            note = f"❌ Не отправилось: {err}"
+        else:
+            note = result.get("message") or "Готово."
+        pending = result.get("pending")
+        if pending:
+            await callback.message.answer(
+                f"{note}\n\n{format_review_card(pending)}",
+                reply_markup=review_keyboard(),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        else:
+            await callback.message.answer(note + "\n" + (result.get("message") or ""))
+
+    @dp.callback_query(F.data == "rv_skip")
+    async def cb_rv_skip(callback: types.CallbackQuery):
+        result = get_autopilot().skip()
+        await callback.answer("Пропущено")
+        pending = result.get("pending")
+        if pending:
+            await callback.message.answer(
+                format_review_card(pending, "Пропущено. Следующая:"),
+                reply_markup=review_keyboard(),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        else:
+            await callback.message.answer(result.get("message") or "Очередь закончилась.")
+
+    @dp.callback_query(F.data == "rv_regen")
+    async def cb_rv_regen(callback: types.CallbackQuery):
+        await callback.answer("Переписываю письмо...")
+        result = await asyncio.to_thread(get_autopilot().regenerate_letter)
+        pending = result.get("pending")
+        if pending:
+            await callback.message.answer(
+                format_review_card(pending, "Новый черновик из текущего резюме:"),
+                reply_markup=review_keyboard(),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        else:
+            await callback.message.answer(result.get("message") or "Нет карточки.")
+
+    @dp.callback_query(F.data == "rv_edit")
+    async def cb_rv_edit(callback: types.CallbackQuery, state: FSMContext):
+        await state.set_state(BotStates.waiting_for_review_letter)
+        await callback.answer()
+        await callback.message.answer("Пришлите новый текст письма одним сообщением. Потом снова покажу карточку — отправите кнопкой «Отправить».")
+
+    @dp.message(StateFilter(BotStates.waiting_for_review_letter))
+    async def on_review_letter(message: types.Message, state: FSMContext):
+        text = (message.text or "").strip()
+        if len(text) < 20:
+            await message.answer("Слишком коротко. Пришлите полный текст письма.")
+            return
+        result = get_autopilot().update_pending_letter(text)
+        await state.clear()
+        pending = result.get("pending")
+        if pending:
+            await message.answer(
+                format_review_card(pending, "Письмо обновлено. Проверьте и жмите «Отправить»."),
+                reply_markup=review_keyboard(),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        else:
+            await message.answer(result.get("message") or "Не удалось сохранить письмо.")
 
     @dp.callback_query(F.data == "menu_analyze")
     async def cb_menu_analyze(callback: types.CallbackQuery):
@@ -842,12 +1037,32 @@ def create_bot_app() -> Optional[tuple[Dispatcher, Bot]]:
         id_col = "ID Вакансии" if "ID Вакансии" in df.columns else "id"
         row = df[df[id_col].astype(str) == str(v_id)]
         letter = ""
-        if not row.empty and "Сопроводительное письмо" in row.columns:
-            letter = str(row["Сопроводительное письмо"].values[0])
+        title = ""
+        employer = ""
+        desc = ""
+        skills = ""
+        if not row.empty:
+            rec = row.iloc[0]
+            if "Сопроводительное письмо" in row.columns:
+                letter = str(rec.get("Сопроводительное письмо") or "")
+            title = str(rec.get("Название вакансии") or rec.get("title") or "")
+            employer = str(rec.get("Компания") or rec.get("employer") or "")
+            desc = str(rec.get("Полное описание") or rec.get("description") or "")
+            skills = str(rec.get("Ключевые навыки") or rec.get("skills") or "")
+        weak = (
+            not letter
+            or letter.lower() in {"nan", "none"}
+            or len(letter) < 80
+            or "буду рад" in letter.lower()
+            or "опираюсь на" in letter.lower()
+        )
+        if weak and title:
+            match_info = analyzer.analyze_match(title, desc, skills)
+            letter = analyzer.generate_cover_letter(title, employer, desc, match_info)
 
         result = responder.apply(vacancy_id=v_id, resume_id=settings.HH_RESUME_ID or None, message=letter)
         if result.get("success"):
-            storage.update_status(vacancy_id=v_id, status="APPLIED")
+            storage.update_status(vacancy_id=v_id, status="APPLIED", cover_letter=letter)
             await callback.message.edit_reply_markup(reply_markup=None)
             await callback.message.reply(f"✅ **Отклик успешно отправлен на HH.ru!** (ID {v_id})", parse_mode="Markdown")
         else:

@@ -1,12 +1,28 @@
-import os
+import fcntl
+import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Dict, Any, Set, Tuple
+from typing import List, Dict, Any, Optional, Set, Tuple
 import pandas as pd
-from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 from src.config import settings
+
+_THREAD_LOCK = threading.Lock()
+
+
+@contextmanager
+def _excel_file_lock(lock_path: Path):
+    """Процессный + файловый лок, чтобы веб, бот и автопилот не портили xlsx одновременно."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with _THREAD_LOCK:
+        with open(lock_path, "a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 class ExcelStorage:
@@ -52,22 +68,27 @@ class ExcelStorage:
 
     def __init__(self, file_path: Path = settings.EXCEL_PATH):
         self.file_path = file_path
+        self.lock_path = file_path.parent / ".excel.lock"
+
+    def _id_col(self, df: pd.DataFrame) -> str:
+        return "ID Вакансии" if "ID Вакансии" in df.columns else "id"
 
     def get_existing_ids(self) -> Set[str]:
         """Возвращает множество уже сохраненных ID вакансий, чтобы избежать дубликатов."""
-        if not self.file_path.exists():
+        df = self.load_all()
+        if df.empty:
             return set()
-        try:
-            df = pd.read_excel(self.file_path, dtype={"id": str, "ID Вакансии": str})
-            col = "ID Вакансии" if "ID Вакансии" in df.columns else "id"
-            if col in df.columns:
-                return set(df[col].dropna().astype(str).tolist())
-        except Exception:
+        col = self._id_col(df)
+        if col not in df.columns:
             return set()
-        return set()
+        return set(df[col].dropna().astype(str).tolist())
 
     def load_all(self) -> pd.DataFrame:
         """Загрузка всех сохраненных вакансий в DataFrame."""
+        with _excel_file_lock(self.lock_path):
+            return self._load_unlocked()
+
+    def _load_unlocked(self) -> pd.DataFrame:
         if not self.file_path.exists():
             return pd.DataFrame(columns=list(self.COLUMN_NAMES_RU.values()))
         return pd.read_excel(self.file_path, dtype=str)
@@ -75,7 +96,8 @@ class ExcelStorage:
     def clear_all(self) -> bool:
         """Полная очистка локальной базы вакансий (создает чистый Excel-файл с заголовками)."""
         empty_df = pd.DataFrame(columns=list(self.COLUMN_NAMES_RU.values()))
-        self._write_styled_excel(empty_df)
+        with _excel_file_lock(self.lock_path):
+            self._write_styled_excel(empty_df)
         return True
 
     def save_or_update_vacancies(self, vacancies: List[Dict[str, Any]]) -> Tuple[int, int]:
@@ -86,48 +108,47 @@ class ExcelStorage:
         if not vacancies:
             return 0, 0
 
-        existing_df = self.load_all()
-        id_col = "ID Вакансии" if "ID Вакансии" in existing_df.columns else "id"
+        with _excel_file_lock(self.lock_path):
+            existing_df = self._load_unlocked()
+            id_col = self._id_col(existing_df)
 
-        existing_ids = set()
-        if not existing_df.empty and id_col in existing_df.columns:
-            existing_ids = set(existing_df[id_col].dropna().astype(str).tolist())
+            existing_ids = set()
+            if not existing_df.empty and id_col in existing_df.columns:
+                existing_ids = set(existing_df[id_col].dropna().astype(str).tolist())
 
-        new_items = []
-        updated_count = 0
+            new_items = []
+            updated_count = 0
 
-        # Обновляем существующие записи в DataFrame
-        for v in vacancies:
-            v_id = str(v.get("id"))
-            if v_id in existing_ids:
-                mask = existing_df[id_col].astype(str) == v_id
-                if mask.any():
-                    # Обновляем поля, если в новых данных есть значения
-                    for key, val in v.items():
-                        ru_col = self.COLUMN_NAMES_RU.get(key, key)
-                        if ru_col in existing_df.columns and val is not None and str(val).strip():
-                            existing_df.loc[mask, ru_col] = str(val)
-                    updated_count += 1
+            for v in vacancies:
+                v_id = str(v.get("id"))
+                if v_id in existing_ids:
+                    mask = existing_df[id_col].astype(str) == v_id
+                    if mask.any():
+                        for key, val in v.items():
+                            ru_col = self.COLUMN_NAMES_RU.get(key, key)
+                            if ru_col in existing_df.columns and val is not None and str(val).strip():
+                                existing_df.loc[mask, ru_col] = str(val)
+                        updated_count += 1
+                else:
+                    new_items.append(v)
+
+            if new_items:
+                new_df = pd.DataFrame(new_items)
+                new_df = new_df.rename(columns=self.COLUMN_NAMES_RU)
+                if not existing_df.empty:
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                else:
+                    combined_df = new_df
             else:
-                new_items.append(v)
+                combined_df = existing_df
 
-        if new_items:
-            new_df = pd.DataFrame(new_items)
-            new_df = new_df.rename(columns=self.COLUMN_NAMES_RU)
-            if not existing_df.empty:
-                combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-            else:
-                combined_df = new_df
-        else:
-            combined_df = existing_df
-
-        self._write_styled_excel(combined_df)
-        return len(new_items), updated_count
+            self._write_styled_excel(combined_df)
+            return len(new_items), updated_count
 
     def save_new_vacancies(self, vacancies: List[Dict[str, Any]]) -> int:
         """
         Добавляет новые вакансии и обновляет существующие.
-        Возвращает общее число добавленных + обновленных.
+        Возвращает число новых записей (если новых нет — число обновлённых).
         """
         added, updated = self.save_or_update_vacancies(vacancies)
         return added if added > 0 else updated
@@ -135,33 +156,64 @@ class ExcelStorage:
     def update_status(
         self,
         vacancy_id: str,
-        status: str,
+        status: Optional[str] = None,
         match_score: Any = None,
         cover_letter: str = "",
         notes: str = "",
     ) -> bool:
         """Обновление статуса, скора или сопроводительного письма для конкретной вакансии."""
-        if not self.file_path.exists():
-            return False
+        return self.update_rows(
+            [
+                {
+                    "id": vacancy_id,
+                    "status": status,
+                    "match_score": match_score,
+                    "cover_letter": cover_letter,
+                    "notes": notes,
+                }
+            ]
+        ) > 0
 
-        df = pd.read_excel(self.file_path, dtype=str)
-        id_col = "ID Вакансии" if "ID Вакансии" in df.columns else "id"
+    def update_rows(self, updates: List[Dict[str, Any]]) -> int:
+        """Пакетное обновление строк Excel одним проходом записи."""
+        if not updates:
+            return 0
 
-        mask = df[id_col].astype(str) == str(vacancy_id)
-        if not mask.any():
-            return False
+        with _excel_file_lock(self.lock_path):
+            if not self.file_path.exists():
+                return 0
+            df = self._load_unlocked()
+            id_col = self._id_col(df)
+            changed = 0
 
-        if "Статус" in df.columns:
-            df.loc[mask, "Статус"] = status
-        if match_score is not None and "Score (%)" in df.columns:
-            df.loc[mask, "Score (%)"] = str(match_score)
-        if cover_letter and "Сопроводительное письмо" in df.columns:
-            df.loc[mask, "Сопроводительное письмо"] = cover_letter
-        if notes and "Заметки / Резюме анализа" in df.columns:
-            df.loc[mask, "Заметки / Резюме анализа"] = notes
+            for item in updates:
+                vacancy_id = str(item.get("id") or "")
+                if not vacancy_id:
+                    continue
+                mask = df[id_col].astype(str) == vacancy_id
+                if not mask.any():
+                    continue
 
-        self._write_styled_excel(df)
-        return True
+                status = item.get("status")
+                match_score = item.get("match_score")
+                cover_letter = item.get("cover_letter", "")
+                notes = item.get("notes", "")
+
+                if status and "Статус" in df.columns:
+                    df.loc[mask, "Статус"] = status
+                elif status and "status" in df.columns:
+                    df.loc[mask, "status"] = status
+                if match_score is not None and "Score (%)" in df.columns:
+                    df.loc[mask, "Score (%)"] = str(match_score)
+                if cover_letter and "Сопроводительное письмо" in df.columns:
+                    df.loc[mask, "Сопроводительное письмо"] = cover_letter
+                if notes and "Заметки / Резюме анализа" in df.columns:
+                    df.loc[mask, "Заметки / Резюме анализа"] = notes
+                changed += 1
+
+            if changed:
+                self._write_styled_excel(df)
+            return changed
 
     def _write_styled_excel(self, df: pd.DataFrame):
         """Красивое сохранение с авто-шириной столбцов и стилизацией шапки."""

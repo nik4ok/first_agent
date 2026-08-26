@@ -6,5 +6,8 @@ data/*.xlsx
 data/*.json
 data/*.png
 data/*.txt
+data/.excel.lock
+data/.autopilot.lock
+data/.sent_applications.lock
 !data/.gitkeep
 .DS_Store

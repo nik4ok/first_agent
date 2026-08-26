@@ -11,6 +11,8 @@ class Settings:
     ROOT_DIR: Path = ROOT_DIR
     DATA_DIR: Path = ROOT_DIR / "data"
     EXCEL_PATH: Path = DATA_DIR / "vacancies.xlsx"
+    SENT_APPLICATIONS_JSON: Path = DATA_DIR / "sent_applications.json"
+    SENT_APPLICATIONS_XLSX: Path = DATA_DIR / "sent_applications.xlsx"
     RESUME_PATH: Path = DATA_DIR / "my_resume.txt"
 
     # HH API

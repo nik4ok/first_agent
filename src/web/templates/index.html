@@ -60,6 +60,9 @@
                 <a href="/api/download-excel" class="inline-flex items-center px-3 py-1.5 text-xs font-bold rounded-xl text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition shadow-2xs">
                     <i class="fa-solid fa-file-excel mr-1.5 text-emerald-600"></i> Скачать Excel
                 </a>
+                <a href="/api/download-sent" class="inline-flex items-center px-3 py-1.5 text-xs font-bold rounded-xl text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition shadow-2xs">
+                    <i class="fa-solid fa-paper-plane mr-1.5 text-indigo-600"></i> Журнал откликов
+                </a>
 
                 <button onclick="openClearDatabaseModal()" class="inline-flex items-center px-3 py-1.5 text-xs font-bold rounded-xl text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition shadow-2xs cursor-pointer" title="Очистить локальную базу вакансий (Excel)">
                     <i class="fa-solid fa-trash-can mr-1.5 text-rose-600"></i> Очистить базу
@@ -81,6 +84,44 @@
             </div>
         </div>
     </header>
+
+    <div id="autopilot-banner" class="hidden border-b border-indigo-200 bg-indigo-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div class="flex items-center gap-2 text-xs text-indigo-900">
+                <i class="fa-solid fa-clock text-indigo-600"></i>
+                <span id="autopilot-banner-text" class="font-semibold">Автопилот не запущен</span>
+            </div>
+            <button onclick="stopAutopilot()" class="px-3 py-1.5 text-xs font-bold rounded-lg bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-100">
+                Остановить очередь
+            </button>
+        </div>
+    </div>
+
+    <div id="review-card" class="hidden max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+        <div class="bg-white border border-indigo-200 rounded-2xl shadow-2xs overflow-hidden">
+            <div class="px-5 py-3 bg-indigo-50 border-b border-indigo-100 flex items-center justify-between gap-3">
+                <div>
+                    <p class="text-[11px] font-bold uppercase tracking-wider text-indigo-500" id="review-progress">На подтверждении</p>
+                    <h2 class="text-base font-black text-slate-900 leading-tight" id="review-title">Вакансия</h2>
+                    <p class="text-xs text-slate-500 mt-0.5" id="review-meta"></p>
+                </div>
+                <a id="review-url" href="#" target="_blank" class="shrink-0 text-xs font-bold text-indigo-700 bg-white border border-indigo-200 rounded-xl px-3 py-1.5 hover:bg-indigo-50">
+                    Открыть на hh.ru
+                </a>
+            </div>
+            <div class="p-5 space-y-3">
+                <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-500">Сопроводительное письмо — можно править перед отправкой</label>
+                <textarea id="review-letter" rows="8" class="w-full p-3.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none leading-relaxed text-slate-800"></textarea>
+                <div class="flex flex-wrap items-center justify-end gap-2">
+                    <button onclick="reviewSkip()" class="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 rounded-xl">Пропустить</button>
+                    <button onclick="reviewRegen()" class="px-4 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-xl hover:bg-indigo-100">Переписать письмо</button>
+                    <button onclick="reviewApprove()" id="btn-review-send" class="px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm">
+                        Отправить отклик
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Main Content Area -->
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
@@ -121,7 +162,7 @@
                     <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Отправлено откликов</p>
                     <p class="text-2xl font-black text-indigo-600 mt-1" id="stat-applied">0</p>
                     <span class="text-[11px] text-indigo-500 font-medium flex items-center gap-1 mt-0.5">
-                        <i class="fa-solid fa-paper-plane"></i> Через Playwright / HH
+                        <i class="fa-solid fa-paper-plane"></i> Журнал sent_applications.xlsx
                     </span>
                 </div>
                 <div class="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-xl shadow-2xs">
@@ -321,6 +362,7 @@
                         <option value="ALL">Все статусы</option>
                         <option value="NEW">🆕 Только новые (NEW)</option>
                         <option value="ANALYZED">🧠 Проанализированы (ANALYZED)</option>
+                        <option value="QUEUED">⏳ В очереди автопилота (QUEUED)</option>
                         <option value="APPLIED">🚀 Отправлен отклик (APPLIED)</option>
                         <option value="INVITED">🎉 Приглашения (INVITED)</option>
                         <option value="SKIPPED">🚫 Пропущенные (SKIPPED)</option>
@@ -379,13 +421,25 @@
                         <i class="fa-solid fa-shield-halved text-indigo-600"></i> Как работает безопасный автопилот:
                     </p>
                     <ul class="list-disc list-inside space-y-1 leading-relaxed text-[11px]">
-                        <li>Берет самые релевантные вакансии из базы (отсортированные по Match Score %).</li>
-                        <li>Генерирует персональное сопроводительное письмо под стек работодателя.</li>
-                        <li>Делает безопасные интервалы (2 сек) между запросами для защиты от блокировок HH.</li>
+                        <li>Берёт вакансии по Match Score и вашим критериям (ключевые слова).</li>
+                        <li>Пишет сопроводительное из <b>текущего</b> резюме — без зашитого профиля.</li>
+                        <li>По умолчанию показывает вакансию и письмо: отправить, поправить или пропустить.</li>
                     </ul>
                 </div>
 
-                <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block font-bold text-slate-700 mb-1 uppercase tracking-wider text-[11px]">Критерии соответствия (через запятую):</label>
+                    <input id="autopilot-keywords" type="text" placeholder="например: продуктовый аналитик, A/B, SQL" class="w-full p-2.5 text-xs font-medium border border-slate-300 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div>
+                        <label class="block font-bold text-slate-700 mb-1 uppercase tracking-wider text-[11px]">Режим:</label>
+                        <select id="autopilot-mode" class="w-full p-2.5 text-xs font-bold border border-slate-300 rounded-xl bg-slate-50 focus:outline-none">
+                            <option value="review" selected>С подтверждением письма</option>
+                            <option value="auto">Автомат, без подтверждения</option>
+                        </select>
+                    </div>
                     <div>
                         <label class="block font-bold text-slate-700 mb-1 uppercase tracking-wider text-[11px]">Количество откликов:</label>
                         <select id="autopilot-count" class="w-full p-2.5 text-xs font-bold border border-slate-300 rounded-xl bg-slate-50 focus:outline-none">
@@ -402,6 +456,17 @@
                             <option value="50">≥ 50% (Средний и высокий)</option>
                             <option value="30">≥ 30% (Широкий охват)</option>
                             <option value="0">Все найденные</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 mb-1 uppercase tracking-wider text-[11px]">Растянуть на:</label>
+                        <select id="autopilot-duration" class="w-full p-2.5 text-xs font-bold border border-slate-300 rounded-xl bg-slate-50 focus:outline-none">
+                            <option value="0.5">30 минут</option>
+                            <option value="1">1 час</option>
+                            <option value="2">2 часа</option>
+                            <option value="3" selected>3 часа</option>
+                            <option value="6">6 часов</option>
+                            <option value="0">Быстро (~1.5 мин между)</option>
                         </select>
                     </div>
                 </div>
@@ -423,7 +488,7 @@
                 <button onclick="closeAutopilotModal()" class="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800">Отмена</button>
                 <button onclick="runAutopilot()" id="btn-start-autopilot" class="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center space-x-1.5">
                     <i class="fa-solid fa-paper-plane"></i>
-                    <span>Запустить автоотклики</span>
+                    <span>Запустить очередь</span>
                 </button>
             </div>
         </div>
@@ -751,6 +816,7 @@
 
     <script>
         let vacanciesData = [];
+        let statsData = {};
         let currentEditingId = null;
         let resumeSummaryData = null;
 
@@ -760,6 +826,8 @@
             await loadResumeSummary();
             await loadResumes();
             await loadVacancies();
+            await refreshAutopilotStatus();
+            setInterval(refreshAutopilotStatus, 8000);
 
             const queryInput = document.getElementById('search-query');
             if (queryInput) {
@@ -1007,8 +1075,12 @@
 
         async function loadVacancies() {
             try {
-                const res = await fetch('/api/vacancies');
+                const [res, statsRes] = await Promise.all([
+                    fetch('/api/vacancies'),
+                    fetch('/api/stats'),
+                ]);
                 vacanciesData = await res.json();
+                statsData = await statsRes.json();
                 updateStats();
                 renderTable();
             } catch (err) {
@@ -1018,12 +1090,20 @@
         }
 
         function updateStats() {
-            const total = vacanciesData.length;
-            const high = vacanciesData.filter(v => parseInt(v.match_score || 0) >= 70).length;
-            const applied = vacanciesData.filter(v => v.status === 'APPLIED').length;
-            
-            const scores = vacanciesData.map(v => parseInt(v.match_score)).filter(s => !isNaN(s));
-            const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+            const total = (statsData && statsData.total != null) ? statsData.total : vacanciesData.length;
+            const high = (statsData && statsData.high_match != null)
+                ? statsData.high_match
+                : vacanciesData.filter(v => parseInt(v.match_score || 0) >= 70).length;
+            const applied = (statsData && statsData.applied != null)
+                ? statsData.applied
+                : vacanciesData.filter(v => v.status === 'APPLIED').length;
+
+            const avgScore = (statsData && statsData.avg_score != null)
+                ? Math.round(statsData.avg_score)
+                : (() => {
+                    const scores = vacanciesData.map(v => parseInt(v.match_score)).filter(s => !isNaN(s));
+                    return scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+                })();
 
             document.getElementById('stat-total').innerText = total;
             document.getElementById('stat-high').innerText = high;
@@ -1265,6 +1345,7 @@
 
                 let statusBadge = `<span class="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-slate-100 text-slate-600 border border-slate-200">NEW</span>`;
                 if (v.status === 'ANALYZED') statusBadge = `<span class="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-blue-50 text-blue-700 border border-blue-200">ANALYZED</span>`;
+                if (v.status === 'QUEUED') statusBadge = `<span class="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-amber-50 text-amber-800 border border-amber-200"><i class="fa-solid fa-clock mr-1"></i>QUEUED</span>`;
                 if (v.status === 'APPLIED') statusBadge = `<span class="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200"><i class="fa-solid fa-check mr-1"></i>APPLIED</span>`;
                 if (v.status === 'SKIPPED') statusBadge = `<span class="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-rose-50 text-rose-700 border border-rose-200">SKIPPED</span>`;
                 if (v.status === 'INVITED') statusBadge = `<span class="px-2.5 py-1 text-[11px] font-extrabold rounded-lg bg-emerald-500 text-white shadow-xs"><i class="fa-solid fa-trophy mr-1"></i>INVITED</span>`;
@@ -1378,7 +1459,7 @@
                                     <span>Открыть на HH</span>
                                 </button>
 
-                                ${v.status !== 'APPLIED' ? `
+                                ${v.status !== 'APPLIED' && v.status !== 'QUEUED' ? `
                                     <button onclick="applyVacancy('${v.id}')" id="btn-apply-${v.id}" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center space-x-1.5" title="Автоматический отклик через браузерный движок">
                                         <i class="fa-solid fa-paper-plane"></i>
                                         <span>Откликнуться</span>
@@ -1697,15 +1778,147 @@
             document.getElementById('btn-start-autopilot').disabled = false;
             document.getElementById('btn-start-autopilot').classList.remove('opacity-50');
             document.getElementById('modal-autopilot').classList.remove('hidden');
+            refreshAutopilotStatus();
         }
 
         function closeAutopilotModal() {
             document.getElementById('modal-autopilot').classList.add('hidden');
         }
 
+        function formatEta(seconds) {
+            if (seconds === null || seconds === undefined) return '';
+            const total = Math.max(0, parseInt(seconds, 10));
+            const h = Math.floor(total / 3600);
+            const m = Math.floor((total % 3600) / 60);
+            if (h > 0) return `осталось ~${h} ч ${m} мин`;
+            return `осталось ~${m} мин`;
+        }
+
+        async function refreshAutopilotStatus() {
+            try {
+                const res = await fetch('/api/autopilot/status');
+                const data = await res.json();
+                const banner = document.getElementById('autopilot-banner');
+                const bannerText = document.getElementById('autopilot-banner-text');
+                const reviewCard = document.getElementById('review-card');
+                if (data.running) {
+                    banner.classList.remove('hidden');
+                    const eta = formatEta(data.eta_seconds);
+                    bannerText.innerText = `${data.message || 'Очередь активна'} · ${data.applied_count || 0} отправлено, ${data.skipped_count || 0} пропущено, ${data.remaining || 0} в очереди${eta ? ' · ' + eta : ''}`;
+                    const progBox = document.getElementById('autopilot-progress-box');
+                    const statusText = document.getElementById('autopilot-status-text');
+                    const progBar = document.getElementById('autopilot-bar');
+                    const logText = document.getElementById('autopilot-log');
+                    if (progBox && !progBox.classList.contains('hidden')) {
+                        const total = data.queued_total || 1;
+                        const pct = Math.min(100, Math.round(((data.processed || 0) / total) * 100));
+                        statusText.innerText = data.message || 'Очередь активна';
+                        progBar.style.width = `${Math.max(8, pct)}%`;
+                        logText.innerText = `Успешно: ${data.applied_count || 0} | Пропущено: ${data.skipped_count || 0} | Ошибок: ${data.failed_count || 0} | Осталось: ${data.remaining || 0}`;
+                    }
+                } else {
+                    banner.classList.add('hidden');
+                }
+                renderReviewCard(data);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function renderReviewCard(data) {
+            const reviewCard = document.getElementById('review-card');
+            const pending = data && data.pending;
+            if (data && data.running && data.mode !== 'auto' && pending) {
+                reviewCard.classList.remove('hidden');
+                document.getElementById('review-progress').innerText = `На подтверждении ${pending.index || (data.processed + 1) || 1} из ${pending.total || data.queued_total || '?'}`;
+                document.getElementById('review-title').innerText = pending.title || 'Вакансия';
+                const bits = [pending.employer, pending.city, pending.score ? `match ${pending.score}%` : ''].filter(Boolean);
+                document.getElementById('review-meta').innerText = bits.join(' · ');
+                const url = document.getElementById('review-url');
+                url.href = pending.url || `https://hh.ru/vacancy/${pending.id}`;
+                const box = document.getElementById('review-letter');
+                if (document.activeElement !== box) {
+                    box.value = pending.letter || '';
+                }
+            } else {
+                reviewCard.classList.add('hidden');
+            }
+        }
+
+        async function reviewApprove() {
+            const btn = document.getElementById('btn-review-send');
+            const letter = document.getElementById('review-letter').value;
+            btn.disabled = true;
+            btn.innerText = 'Отправляю...';
+            try {
+                const res = await fetch('/api/review/approve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ letter }),
+                });
+                const data = await res.json();
+                if (data.status === 'sent') {
+                    showToast('Отклик отправлен');
+                } else if (data.status === 'failed') {
+                    showToast((data.result && data.result.error) || data.message || 'Не удалось отправить', true);
+                } else {
+                    showToast(data.message || 'Готово');
+                }
+                renderReviewCard(data);
+                await refreshAutopilotStatus();
+                await loadVacancies();
+            } catch (e) {
+                showToast('Ошибка отправки', true);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Отправить отклик';
+            }
+        }
+
+        async function reviewSkip() {
+            try {
+                const res = await fetch('/api/review/skip', { method: 'POST' });
+                const data = await res.json();
+                showToast('Вакансия пропущена');
+                renderReviewCard(data);
+                await loadVacancies();
+            } catch (e) {
+                showToast('Не удалось пропустить', true);
+            }
+        }
+
+        async function reviewRegen() {
+            try {
+                const res = await fetch('/api/review/regenerate', { method: 'POST' });
+                const data = await res.json();
+                if (data.pending && data.pending.letter) {
+                    document.getElementById('review-letter').value = data.pending.letter;
+                }
+                showToast('Письмо пересобрано из текущего резюме');
+                renderReviewCard(data);
+            } catch (e) {
+                showToast('Не удалось переписать письмо', true);
+            }
+        }
+
+        async function stopAutopilot() {
+            try {
+                const res = await fetch('/api/autopilot/stop', { method: 'POST' });
+                const data = await res.json();
+                showToast(data.message || 'Автопилот остановлен');
+                await refreshAutopilotStatus();
+                await loadVacancies();
+            } catch (e) {
+                showToast('Не удалось остановить автопилот', true);
+            }
+        }
+
         async function runAutopilot() {
             const count = parseInt(document.getElementById('autopilot-count').value) || 50;
             const minScore = parseInt(document.getElementById('autopilot-score').value) || 70;
+            const durationHours = parseFloat(document.getElementById('autopilot-duration').value);
+            const mode = document.getElementById('autopilot-mode').value || 'review';
+            const keywords = (document.getElementById('autopilot-keywords').value || '').trim();
 
             const btn = document.getElementById('btn-start-autopilot');
             btn.disabled = true;
@@ -1717,35 +1930,39 @@
             const logText = document.getElementById('autopilot-log');
 
             progBox.classList.remove('hidden');
-            statusText.innerText = `Автопилот запущен: отбираем до ${count} вакансий (Match ≥ ${minScore}%)...`;
-            progBar.style.width = '20%';
-            logText.innerText = 'Подготовка сопроводительных писем и безопасная отправка откликов...';
+            statusText.innerText = `Ставим в очередь до ${count} вакансий (Match ≥ ${minScore}%)...`;
+            progBar.style.width = '15%';
+            logText.innerText = 'Фоновая отправка, дашборд можно закрыть — очередь продолжит работу.';
 
             try {
+                const payload = {
+                    max_count: count,
+                    min_score: minScore,
+                    duration_hours: isNaN(durationHours) ? 3 : durationHours,
+                    delay_seconds: 90,
+                    mode,
+                    keywords,
+                };
                 const res = await fetch('/api/autopilot', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        max_count: count,
-                        min_score: minScore,
-                        delay_seconds: 1.5
-                    })
+                    body: JSON.stringify(payload)
                 });
                 const data = await res.json();
-                progBar.style.width = '100%';
-
-                if (data.status === 'ok') {
-                    statusText.innerText = `🎉 Завершено: отправлено ${data.applied_count} откликов!`;
-                    logText.innerText = `Успешно: ${data.applied_count} | Ошибок: ${data.failed_count}`;
-                    showToast(`🚀 Автопилот успешно отправил ${data.applied_count} откликов!`);
+                if (res.ok && (data.status === 'started' || data.status === 'already_running' || data.status === 'ok')) {
+                    statusText.innerText = data.message || 'Очередь запущена';
+                    progBar.style.width = '25%';
+                    logText.innerText = `В очереди: ${data.queued || data.queued_total || 0} · интервал ${Math.round((data.interval_seconds || 0) / 60)} мин`;
+                    showToast(data.message || 'Автопилот поставлен на расписание');
+                    await refreshAutopilotStatus();
                     await loadVacancies();
                 } else {
-                    statusText.innerText = `⚠️ ${data.message || 'Ошибка запуска автопилота'}`;
-                    showToast(data.message || "Ошибка автопилота", true);
+                    statusText.innerText = data.detail || data.message || 'Не удалось запустить автопилот';
+                    showToast(data.detail || data.message || 'Ошибка автопилота', true);
                 }
             } catch (err) {
-                statusText.innerText = '❌ Ошибка при выполнении автопилота';
-                showToast("Ошибка при выполнении автопилота", true);
+                statusText.innerText = 'Ошибка при запуске автопилота';
+                showToast('Ошибка при запуске автопилота', true);
             } finally {
                 btn.disabled = false;
                 btn.classList.remove('opacity-50');

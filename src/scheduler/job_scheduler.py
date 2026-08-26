@@ -9,6 +9,7 @@ from src.config import settings
 from src.parser import HHClient, ExcelStorage
 from src.analyzer import AIResumeAnalyzer
 from src.responder import NegotiationTracker
+from src.responder.autopilot import get_autopilot
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,10 @@ class JobHuntingScheduler:
                 text=settings.SEARCH_TEXT,
                 area=settings.SEARCH_AREA,
                 experience=settings.SEARCH_EXPERIENCE,
+                search_period=settings.SEARCH_PERIOD,
                 only_with_salary=settings.SEARCH_ONLY_WITH_SALARY,
-                max_vacancies=10,
+                max_vacancies=20,
+                fetch_full_description=True,
             )
 
             if not vacancies:
@@ -144,12 +147,24 @@ class JobHuntingScheduler:
         except Exception as e:
             logger.error(f"❌ [Планировщик] Ошибка в track_negotiations_job: {e}")
 
+    async def autopilot_tick_job(self):
+        """Тик фоновой очереди автооткликов (50 вакансий за N часов и т.п.)."""
+        try:
+            await get_autopilot().tick()
+        except Exception as e:
+            logger.error("❌ [Планировщик] Ошибка тика автопилота: %s", e)
+
     def start(self, scan_interval_minutes: int = 30, tracking_interval_minutes: int = 10):
         """Запуск фонового расписания."""
         self.scheduler.add_job(self.scan_and_analyze_job, "interval", minutes=scan_interval_minutes, id="job_scanner")
         self.scheduler.add_job(self.track_negotiations_job, "interval", minutes=tracking_interval_minutes, id="job_tracker")
+        self.scheduler.add_job(self.autopilot_tick_job, "interval", seconds=15, id="autopilot_tick")
         self.scheduler.start()
-        logger.info(f"🚀 Планировщик запущен (поиск: каждые {scan_interval_minutes} мин, трекинг: каждые {tracking_interval_minutes} мин).")
+        logger.info(
+            "🚀 Планировщик запущен (поиск: каждые %s мин, трекинг: каждые %s мин, автопилот: каждые 15 сек).",
+            scan_interval_minutes,
+            tracking_interval_minutes,
+        )
 
     def stop(self):
         self.scheduler.shutdown()
